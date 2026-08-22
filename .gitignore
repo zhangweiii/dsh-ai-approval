@@ -1,0 +1,13 @@
+node_modules/
+.pnpm-store/
+lib/
+coverage/
+*.log
+*.tgz
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+!.env.example
+.npmrc
+lib/tsconfig.tsbuildinfo

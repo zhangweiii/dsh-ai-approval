@@ -1,0 +1,13 @@
+node_modules/
+.pnpm-store/
+coverage/
+tests/
+src/
+scripts/
+*.tsbuildinfo
+.github/
+.gitignore
+.npmignore
+README.i18n.yaml
+lib/tsconfig.tsbuildinfo
+*.tgz

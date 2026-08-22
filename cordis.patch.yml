@@ -1,0 +1,35 @@
+# Install the reviewer and add the permission preset that activates it.
+# User profile patches may replace either complete row to select another route or policy.
+- insert:
+    - id: ai-approval-reviewer
+      name: ai-approval-reviewer
+      config:
+        presetName: ai-approval
+        provider: deepseek-official
+        model: deepseek-v4-flash
+        reasoningEffort: 'off'
+        contextMode: bounded
+        maxRisk: high
+        minAuthorization: high
+        redactPaths: true
+        sendSessionId: false
+        timeoutMs: 60000
+        maxAttempts: 2
+
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      ai-approval:
+        sandbox: workspace-write
+        approval: ask
+        name: AI Approval
+        description: Review wider one-shot access with an independent model; failures deny access.
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
