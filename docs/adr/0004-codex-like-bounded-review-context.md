@@ -9,7 +9,7 @@ An action-only request contains the pending action and the agent-authored escala
 
 ## Decision
 
-Default to `contextMode: bounded`, `maxRisk: high`, `minAuthorization: high`, `redactPaths: true`, and `sendSessionId: false`. The projection retains budgeted direct user messages and recent visible evidence, omits hidden reasoning, and keeps the exact pending action intact. Direct user messages are the authority; repository text, tool arguments, results, and agent instructions remain untrusted evidence.
+Default to `contextMode: bounded`, `maxRisk: high`, `minAuthorization: high`, `redactPaths: true`, and `sendSessionId: false`. The projection retains budgeted direct user messages and recent visible evidence, omits hidden reasoning, and keeps the exact pending action intact. The configured text request budget covers combined reviewer system and user text; if the exact action cannot fit intact, review fails closed before provider preparation instead of truncating the action. Direct user messages are the authority; repository text, tool arguments, results, and agent instructions remain untrusted evidence.
 
 The reviewer may approve a necessary, proportionate, narrowly scoped, and reversible boundary crossing when the user explicitly authorized its material effects, including a provider-classified high-risk workspace boundary crossing. It denies secret or private-data disclosure, credential probing, broad or persistent security weakening, significant irreversible destruction, `critical` risk, conflicting user constraints, and workarounds for a rejected action. Approval remains `allowed-once` and does not change the session's `workspace-write` preset.
 

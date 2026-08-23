@@ -1,8 +1,8 @@
 # Install the reviewer and add the permission preset that activates it.
 # User profile patches may replace either complete row to select another route or policy.
 - insert:
-    - id: ai-approval-reviewer
-      name: ai-approval-reviewer
+    - id: dsh-ai-approval
+      name: dsh-ai-approval
       config:
         presetName: ai-approval
         provider: deepseek-official
@@ -16,6 +16,7 @@
         sendSessionId: false
         timeoutMs: 60000
         maxAttempts: 2
+        maxInputBytes: 48000
         maxImageTokens: 10000
         maxImages: 8
         maxImageBytes: 16777216

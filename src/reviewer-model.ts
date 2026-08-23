@@ -8,7 +8,11 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import { BlockAssembler, createUserMessage, deepFreeze } from '@deepseek-ai/dsh-llm'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm/brand'
-import { buildReviewContext, type ReviewImageStats } from './review-context.js'
+import {
+  buildReviewContext,
+  ReviewInputTooLargeError,
+  type ReviewImageStats,
+} from './review-context.js'
 import { parseAssessment, type ReviewerAssessment } from './assessment.js'
 import type { ResolvedConfig, ReviewerRoute } from './config.js'
 import type { ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
@@ -33,6 +37,7 @@ export const REVIEW_SYSTEM_PROMPT = [
 export type ReviewerFailureCategory =
   | 'aborted'
   | 'timeout'
+  | 'invalid-input'
   | 'invalid-output'
   | 'provider-error'
   | 'unknown'
@@ -41,6 +46,7 @@ export type ReviewerFailureCategory =
 export type ReviewerFailureDetail =
   | 'aborted'
   | 'timeout'
+  | 'input-too-large'
   | 'output-token-limit'
   | 'unexpected-tool-call'
   | 'missing-finish'
@@ -74,6 +80,7 @@ function classifyFailureDetail(error: unknown): ReviewerFailureDetail {
   if (!(error instanceof Error)) return 'unknown'
   if (error.name === 'AbortError') return 'aborted'
   if (error.message.includes('AI_APPROVAL_TIMEOUT')) return 'timeout'
+  if (error instanceof ReviewInputTooLargeError) return 'input-too-large'
   if (error.message.includes('reached maxOutputTokens')) return 'output-token-limit'
   if (error.message.includes('unexpectedly requested a tool')) return 'unexpected-tool-call'
   if (error.message.includes('no finish reason')) return 'missing-finish'
@@ -88,6 +95,7 @@ function classifyFailureDetail(error: unknown): ReviewerFailureDetail {
 function classifyFailure(error: unknown): ReviewerFailureCategory {
   if (error instanceof Error && error.name === 'AbortError') return 'aborted'
   if (error instanceof Error && error.message.includes('AI_APPROVAL_TIMEOUT')) return 'timeout'
+  if (error instanceof ReviewInputTooLargeError) return 'invalid-input'
   if (
     error instanceof Error &&
     (error.message.startsWith('ai-approval: reviewer returned') ||
@@ -140,6 +148,18 @@ export class ReviewerModel {
     const assembler = new BlockAssembler()
     let imageStats: ReviewImageStats | undefined
     try {
+      const systemBytes = Buffer.byteLength(REVIEW_SYSTEM_PROMPT, 'utf8')
+      const userTextBudget = this.config.maxInputBytes - systemBytes
+      if (userTextBudget <= 0) throw new ReviewInputTooLargeError()
+      const promptConfig = {
+        ...this.config,
+        maxInputBytes: userTextBudget,
+        messages,
+      }
+      const textContext = buildReviewContext(request, execution, {
+        ...promptConfig,
+        admitImages: false,
+      })
       const prepared = await this.ctx.llm.prepareCall(
         {
           provider: route.provider,
@@ -151,11 +171,6 @@ export class ReviewerModel {
         },
         signal,
       )
-      const textContext = buildReviewContext(request, execution, {
-        ...this.config,
-        messages,
-        admitImages: false,
-      })
       const acceptsImages =
         !forceTextOnly &&
         route.imageMode === 'allow' &&
@@ -169,19 +184,21 @@ export class ReviewerModel {
           : Math.max(0, prepared.context.contextWindow - reservedTokens)
       const context = acceptsImages
         ? buildReviewContext(request, execution, {
-            ...this.config,
-            messages,
+            ...promptConfig,
             admitImages: true,
             maxImageTokens: Math.min(this.config.maxImageTokens, contextImageTokens),
           })
         : textContext
+      if (systemBytes + Buffer.byteLength(context.text, 'utf8') > this.config.maxInputBytes) {
+        throw new ReviewInputTooLargeError()
+      }
       imageStats = context.imageStats
       const options: GenerateOptions = deepFreeze({
         ...prepared.config,
         messages: [
           createUserMessage({
             content: [{ type: 'text', text: context.text }, ...context.images],
-            source: { kind: 'plugin', plugin: 'ai-approval-reviewer' },
+            source: { kind: 'plugin', plugin: 'dsh-ai-approval' },
           }),
         ],
         system: REVIEW_SYSTEM_PROMPT,

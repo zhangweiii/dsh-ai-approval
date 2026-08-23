@@ -41,7 +41,7 @@ export interface Config {
   imageMode?: ReviewerImageMode
   /** End-to-end reviewer deadline in milliseconds. */
   timeoutMs?: number
-  /** Maximum UTF-8 bytes allocated to reviewer input. */
+  /** Maximum combined UTF-8 bytes for reviewer system and user text; images use separate limits. */
   maxInputBytes?: number
   /** Maximum generated tokens for one assessment. */
   maxOutputTokens?: number

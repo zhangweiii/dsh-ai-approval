@@ -6,7 +6,7 @@ The reviewer needs a Web model picker that can use any provider already register
 
 ## Decision
 
-Register an `ai-approval-reviewer` DSH Settings namespace containing only `provider`, `model`, and optional `reasoningEffort`. The Web control reads DSH's host-wide `llm.models` catalog and updates that namespace through the standard settings mutation API. The configured Bundle route remains the base layer and fallback when no settings provider is mounted.
+Register a `dsh-ai-approval` DSH Settings namespace containing only `provider`, `model`, and optional `reasoningEffort`. The Web control reads DSH's host-wide `llm.models` catalog and updates that namespace through the standard settings mutation API. The configured Bundle route remains the base layer and fallback when no settings provider is mounted.
 
 Snapshot the resolved route at the start of one review. Retries and audit events for that review use the same snapshot; later settings changes affect only later approval requests.
 

@@ -95,6 +95,7 @@ function installFixture(options: FixtureOptions = {}) {
   const sessions = sessionFixture('session-1')
   const steps = [...(options.steps ?? [{ kind: 'success' } as Step])]
   let calls = 0
+  let prepares = 0
   const stream = async function* (providerOptionsArg: any) {
     providerOptions.push(providerOptionsArg)
     const step = steps[calls++] ?? steps.at(-1)!
@@ -121,16 +122,19 @@ function installFixture(options: FixtureOptions = {}) {
     if (step.kind === 'finish') yield { type: 'finish', reason: step.reason }
     else if (step.kind !== 'no-finish') yield { type: 'finish', reason: { kind: 'stop' } }
   }
-  const prepareCall = async (config: Record<string, unknown>) => ({
-    config,
-    ...(options.inputModalities === null
-      ? {}
-      : { inputModalities: options.inputModalities ?? ['text'] }),
-    ...(options.contextWindow === null
-      ? {}
-      : { context: { contextWindow: options.contextWindow ?? 128_000 } }),
-    stream,
-  })
+  const prepareCall = async (config: Record<string, unknown>) => {
+    prepares++
+    return {
+      config,
+      ...(options.inputModalities === null
+        ? {}
+        : { inputModalities: options.inputModalities ?? ['text'] }),
+      ...(options.contextWindow === null
+        ? {}
+        : { context: { contextWindow: options.contextWindow ?? 128_000 } }),
+      stream,
+    }
+  }
   const preset = options.preset ?? 'ai-approval'
   const scope: any = {
     llm: { prepareCall, stream },
@@ -140,6 +144,7 @@ function installFixture(options: FixtureOptions = {}) {
     emit: (event: string, _session: unknown, data: any) => {
       if (event.startsWith('ai-approval/review')) reviewEvents.push({ type: event, data })
     },
+    effect: (setup: () => unknown) => setup(),
     inject: (_deps: unknown, callback: (scope: any) => void) => callback(scope),
   }
   const context = {
@@ -157,6 +162,9 @@ function installFixture(options: FixtureOptions = {}) {
     reviewEvents,
     get calls() {
       return calls
+    },
+    get prepares() {
+      return prepares
     },
     execution: makeExecution(sessions.agent),
     request: makeRequest(sessions.agent),
@@ -740,6 +748,7 @@ describe('runtime security contracts', () => {
     const controller = new AbortController()
     await prepare(fixture)
     const pending = approval(fixture, makeRequest(fixture.agent, 'call-1', controller.signal))
+    await vi.waitFor(() => expect(fixture.calls).toBe(1))
     controller.abort()
     release()
     await expect(pending).resolves.toBe('cancelled')
@@ -787,11 +796,78 @@ describe('runtime security contracts', () => {
     await prepare(fixture)
     const first = approval(fixture)
     const second = approval(fixture)
-    await Promise.resolve()
-    expect(fixture.calls).toBe(1)
+    await vi.waitFor(() => expect(fixture.calls).toBe(1))
     release()
     await expect(Promise.all([first, second])).resolves.toEqual(['allowed-once', 'allowed-once'])
     expect(fixture.calls).toBe(1)
+  })
+
+  it('does not start a queued review after its request is cancelled', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const fixture = installFixture({ steps: [{ kind: 'wait', gate }] })
+    const controller = new AbortController()
+    const secondExecution = makeExecution(fixture.agent, 'call-2')
+    const secondRequest = makeRequest(fixture.agent, 'call-2', controller.signal)
+    await prepare(fixture)
+    await prepare(fixture, secondExecution)
+
+    const first = approval(fixture)
+    const second = approval(fixture, secondRequest)
+    await vi.waitFor(() => expect(fixture.calls).toBe(1))
+    controller.abort(new Error('cancel queued review'))
+    release()
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['allowed-once', 'cancelled'])
+    expect(fixture.prepares).toBe(1)
+    expect(fixture.calls).toBe(1)
+    expect(starts(fixture)).toHaveLength(1)
+  })
+
+  it('serializes distinct calls so concurrent denials cannot bypass the session limit', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const fixture = installFixture({
+      config: { maxConsecutiveDenials: 1 },
+      steps: [
+        { kind: 'wait', gate, assessment: deny },
+        { kind: 'success', assessment: allow },
+      ],
+    })
+    const secondExecution = makeExecution(fixture.agent, 'call-2')
+    const secondRequest = makeRequest(fixture.agent, 'call-2')
+    await prepare(fixture)
+    await prepare(fixture, secondExecution)
+
+    const first = approval(fixture)
+    const second = approval(fixture, secondRequest)
+    await vi.waitFor(() => expect(fixture.calls).toBe(1))
+    release()
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['rejected', 'rejected'])
+    expect(fixture.calls).toBe(1)
+    expect(audits(fixture).at(-1)?.rationale).toBe('Reviewer denial limit reached.')
+  })
+
+  it('serializes distinct calls so concurrent failures cannot bypass the circuit', async () => {
+    const fixture = installFixture({
+      config: { maxAttempts: 1, maxConsecutiveFailures: 1 },
+      steps: [{ kind: 'throw' }, { kind: 'success', assessment: allow }],
+    })
+    const secondExecution = makeExecution(fixture.agent, 'call-2')
+    const secondRequest = makeRequest(fixture.agent, 'call-2')
+    await prepare(fixture)
+    await prepare(fixture, secondExecution)
+
+    await expect(
+      Promise.all([approval(fixture), approval(fixture, secondRequest)]),
+    ).resolves.toEqual(['unavailable', 'unavailable'])
+    expect(fixture.calls).toBe(1)
+    expect(audits(fixture).at(-1)?.rationale).toBe('Reviewer failure circuit is open.')
   })
 
   it('removes a pending execution when tools/result arrives', async () => {
@@ -802,8 +878,53 @@ describe('runtime security contracts', () => {
     expect(fixture.calls).toBe(0)
   })
 
+  it('caps combined reviewer system and user text bytes', async () => {
+    const maxInputBytes = 4_000
+    const fixture = installFixture({ config: { maxInputBytes } })
+    await prepare(fixture)
+    await expect(approval(fixture)).resolves.toBe('allowed-once')
+
+    const options = fixture.providerOptions[0]
+    const userText = options.messages[0].content
+      .filter((block: any) => block.type === 'text')
+      .map((block: any) => block.text)
+      .join('')
+    expect(
+      Buffer.byteLength(options.system, 'utf8') + Buffer.byteLength(userText, 'utf8'),
+    ).toBeLessThanOrEqual(maxInputBytes)
+  })
+
+  it('fails closed before route preparation when the exact action exceeds the text budget', async () => {
+    const fixture = installFixture({
+      config: { maxInputBytes: 4_000, maxConsecutiveFailures: 1 },
+    })
+    fixture.execution.arguments = { command: 'x'.repeat(100_000) }
+    await prepare(fixture)
+
+    await expect(approval(fixture)).resolves.toBe('unavailable')
+    expect(fixture.prepares).toBe(0)
+    expect(fixture.calls).toBe(0)
+    expect(audits(fixture)[0]).toMatchObject({
+      approvalOutcome: 'unavailable',
+      attempts: 1,
+      rationale: 'Reviewer unavailable: input-too-large',
+    })
+
+    const validExecution = makeExecution(fixture.agent, 'call-2', 'echo safe')
+    const validRequest = makeRequest(fixture.agent, 'call-2')
+    await prepare(fixture, validExecution)
+    await expect(approval(fixture, validRequest)).resolves.toBe('allowed-once')
+    expect(fixture.prepares).toBe(1)
+    expect(fixture.calls).toBe(1)
+  })
+
   it('redacts adversarial credentials from provider prompt and audit fields', async () => {
     const fixture = installFixture({
+      config: {
+        provider: 'authorization=Bearer route-secret\nforged',
+        model: '/Users/route-owner/private-model',
+        reasoningEffort: 'token=effort-secret\nforged-effort',
+      },
       steps: [
         {
           kind: 'success',
@@ -812,9 +933,11 @@ describe('runtime security contracts', () => {
         },
       ],
     })
-    fixture.request.reason = 'authorization: Bearer live-secret password="pw" github_pat_ABC123'
+    const basicHeader = Buffer.from(['http-user', 'http-password'].join(':')).toString('base64')
+    fixture.request.reason = `authorization=Bearer live-secret password="pw" github_pat_ABC123 Proxy-Authorization: Basic ${basicHeader}`
     fixture.execution.arguments = {
-      command: 'echo token=ghp_ABC123 access_token: live-token /Users/alice/private-repo',
+      command:
+        "curl -H 'Cookie: SID=cookie-primary; secondary=cookie-secondary' https://target.test && echo suffix-action token=ghp_ABC123 access_token: live-token /Users/alice/private-repo",
     }
     await prepare(fixture)
     await expect(approval(fixture)).resolves.toBe('allowed-once')
@@ -828,13 +951,28 @@ describe('runtime security contracts', () => {
       'github_pat_ABC123',
       'ghp_ABC123',
       'live-token',
+      'cookie-primary',
+      'cookie-secondary',
+      basicHeader,
       '/Users/alice',
     ]) {
       expect(prompt).not.toContain(secret)
       expect(audit).not.toContain(secret)
       expect(start).not.toContain(secret)
     }
+    for (const routeSecret of [
+      'route-secret',
+      '/Users/route-owner',
+      '\\nforged',
+      'effort-secret',
+      '\\nforged-effort',
+    ]) {
+      expect(audit).not.toContain(routeSecret)
+      expect(start).not.toContain(routeSecret)
+      expect(visibleReviewSummary(fixture)).not.toContain(routeSecret)
+    }
     expect(prompt).toContain('<redacted>')
+    expect(prompt).toContain('https://target.test && echo suffix-action')
     expect(audit).toContain('/Users/<user>')
   })
 })

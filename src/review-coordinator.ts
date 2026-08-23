@@ -26,11 +26,17 @@ import type {
 } from './config.js'
 import { ReviewerRouteSource } from './reviewer-route-settings.js'
 import type { AiApprovalReviewedData } from './types.js'
+
+function auditField(text: string, redactPaths: boolean): string {
+  return privacyText(text, redactPaths).replace(/[\u0000-\u001f\u007f]+/g, ' ')
+}
+
 export class ReviewCoordinator {
   private readonly denials = new WeakMap<Session, number>()
   private readonly failures = new WeakMap<Session, { consecutive: number; blockedUntil: number }>()
   private readonly cursors = new WeakMap<Session, readonly string[]>()
   private readonly flights = new WeakMap<Session, Map<string, Promise<ApprovalOutcome>>>()
+  private readonly queues = new WeakMap<Session, Promise<void>>()
   private readonly reviewSerials = new WeakMap<Session, number>()
   constructor(
     private readonly ctx: Context,
@@ -44,16 +50,40 @@ export class ReviewCoordinator {
     const flights = this.flights.get(s) ?? new Map<string, Promise<ApprovalOutcome>>()
     const running = flights.get(key)
     if (running) return running
-    const p = this.reviewOnce(request, execution).finally(() => {
+    const p = this.schedule(s, request, execution).finally(() => {
       if (flights.get(key) === p) flights.delete(key)
     })
     flights.set(key, p)
     this.flights.set(s, flights)
     return p
   }
+  private async schedule(
+    s: Session,
+    request: ApprovalRequest,
+    execution: Readonly<ToolExecution>,
+  ): Promise<ApprovalOutcome> {
+    using d = deadline(request.signal, this.config.timeoutMs, 'AI_APPROVAL_TIMEOUT')
+    return await this.enqueue(s, async () => {
+      if (d.signal.aborted) return request.signal?.aborted ? 'cancelled' : 'unavailable'
+      return await this.reviewOnce(request, execution, d.signal)
+    })
+  }
+  private enqueue(s: Session, task: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome> {
+    const prior = this.queues.get(s) ?? Promise.resolve()
+    const review = prior.then(task)
+    const tail = review.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.queues.set(s, tail)
+    return review.finally(() => {
+      if (this.queues.get(s) === tail) this.queues.delete(s)
+    })
+  }
   private async reviewOnce(
     request: ApprovalRequest,
     execution: Readonly<ToolExecution>,
+    signal: AbortSignal,
   ): Promise<ApprovalOutcome> {
     const s = request.agent.session
     const route = this.route.get()
@@ -92,7 +122,6 @@ export class ReviewCoordinator {
       )
       return 'unavailable'
     }
-    using d = deadline(request.signal, this.config.timeoutMs, 'AI_APPROVAL_TIMEOUT')
     const started = Date.now()
     let attempts = 0,
       usage: TokenUsage | undefined,
@@ -121,7 +150,7 @@ export class ReviewCoordinator {
           request,
           execution,
           messages,
-          d.signal,
+          signal,
           route,
           forceTextOnly,
         )
@@ -135,6 +164,7 @@ export class ReviewCoordinator {
           usage = mergeUsage(usage, e.usage)
           captureImages(e.imageStats)
           if (e.hadImages) forceTextOnly = true
+          if (e.category === 'invalid-input') break
         }
         if (request.signal?.aborted) {
           const images = imageAuditOf(
@@ -164,7 +194,7 @@ export class ReviewCoordinator {
           )
           return 'cancelled'
         }
-        if (d.signal.aborted) break
+        if (signal.aborted) break
       }
     }
     const images = imageAuditOf(
@@ -182,14 +212,19 @@ export class ReviewCoordinator {
       ...(images ? { images } : {}),
     }
     if (!assessment) {
-      const consecutive = (fs?.consecutive ?? 0) + 1
-      this.failures.set(s, {
-        consecutive,
-        blockedUntil:
-          consecutive >= this.config.maxConsecutiveFailures
-            ? Date.now() + this.config.failureCooldownMs
-            : 0,
-      })
+      const countsTowardCircuit = !(
+        failure instanceof ReviewerGenerationError && failure.category === 'invalid-input'
+      )
+      if (countsTowardCircuit) {
+        const consecutive = (fs?.consecutive ?? 0) + 1
+        this.failures.set(s, {
+          consecutive,
+          blockedUntil:
+            consecutive >= this.config.maxConsecutiveFailures
+              ? Date.now() + this.config.failureCooldownMs
+              : 0,
+        })
+      }
       this.record(
         reviewId,
         s,
@@ -276,9 +311,11 @@ export class ReviewCoordinator {
       ...(r.callId === undefined ? {} : { callId: r.callId }),
       toolName: r.toolName,
       reason: privacyText(r.reason ?? '', this.config.redactPaths),
-      provider: route.provider,
-      model: route.model,
-      ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
+      provider: auditField(route.provider, this.config.redactPaths),
+      model: auditField(route.model, this.config.redactPaths),
+      ...(route.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: auditField(route.reasoningEffort, this.config.redactPaths) }),
       imageMode: route.imageMode ?? 'omit',
     })
     return reviewId
@@ -307,9 +344,11 @@ export class ReviewCoordinator {
       toolName: r.toolName,
       cwd: privacyText(s.header.cwd ?? '<unknown>', this.config.redactPaths),
       reason: privacyText(r.reason ?? '', this.config.redactPaths),
-      provider: route.provider,
-      model: route.model,
-      ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
+      provider: auditField(route.provider, this.config.redactPaths),
+      model: auditField(route.model, this.config.redactPaths),
+      ...(route.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: auditField(route.reasoningEffort, this.config.redactPaths) }),
       imageMode: route.imageMode ?? 'omit',
       risk,
       authorization,
@@ -330,7 +369,7 @@ type StandardCommandAppender = {
     data: {
       commandId: string
       name: string
-      source: { kind: 'plugin'; plugin: 'ai-approval-reviewer' }
+      source: { kind: 'plugin'; plugin: 'dsh-ai-approval' }
     },
   ): unknown
   (
@@ -353,7 +392,7 @@ function appendStandardReviewOutput(s: Session, review: AiApprovalReviewedData):
   append('command/run', {
     commandId,
     name: 'ai-approval',
-    source: { kind: 'plugin', plugin: 'ai-approval-reviewer' },
+    source: { kind: 'plugin', plugin: 'dsh-ai-approval' },
   })
   append('command/done', {
     commandId,

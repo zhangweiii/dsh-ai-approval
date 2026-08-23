@@ -1,8 +1,21 @@
 #!/usr/bin/env node
 
-import { copyFile, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { constants, realpathSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const LEGACY_TYPES = new Set(['ai-approval/review-started', 'ai-approval/reviewed'])
 
@@ -135,8 +148,9 @@ export async function repairHistory(input) {
       encoded,
       Buffer.concat([await readFile(encodedHeader), await readFile(encodedBody)]),
     )
-    const backup = `${target}.bak-ai-approval-${Date.now()}`
-    await copyFile(target, backup)
+    await chmod(encoded, info.mode & 0o7777)
+    const backup = `${target}.bak-ai-approval-${Date.now()}-${randomUUID()}`
+    await copyFile(target, backup, constants.COPYFILE_EXCL)
     await rename(encoded, target)
     return { target, backup, repaired: result.repaired }
   } finally {
@@ -144,7 +158,16 @@ export async function repairHistory(input) {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
+function isMainModule() {
+  if (!process.argv[1]) return false
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+
+if (isMainModule()) {
   const check = process.argv[2] === '--check'
   const input = process.argv[check ? 3 : 2]
   if (!input) {

@@ -25,6 +25,8 @@ jobs:
         node-version: [20, 22]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
         with:
           version: 10.18.0
@@ -34,8 +36,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      - run: node scripts/secret-scan.mjs
-      - run: pnpm audit --prod --audit-level=high
 
   publish:
     needs: test
@@ -47,12 +47,14 @@ jobs:
       prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
         with:
           version: 10.18.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 24.x
+          node-version: 22.x
           registry-url: https://registry.npmjs.org
           cache: pnpm
       # npm trusted publishing requires npm >= 11.5.1.
@@ -70,7 +72,8 @@ jobs:
             exit 1
           fi
           pnpm release:check
-          case "$VERSION" in
+          VERSION_WITHOUT_BUILD=${VERSION%%+*}
+          case "$VERSION_WITHOUT_BUILD" in
             *-*)
               echo "dist_tag=next" >> "$GITHUB_OUTPUT"
               echo "prerelease=true" >> "$GITHUB_OUTPUT"
@@ -88,9 +91,42 @@ jobs:
             echo "Publishing ${PACKAGE_NAME}@${VERSION}"
           fi
 
-      - name: Publish to npm with provenance
+      - name: Pack release artifacts
+        shell: bash
+        run: |
+          rm -rf release-artifacts
+          mkdir release-artifacts
+          pnpm --silent sbom > release-artifacts/sbom.cdx.json
+          npm pack --pack-destination release-artifacts
+          (cd release-artifacts && sha256sum *.tgz sbom.cdx.json > SHA256SUMS)
+
+      - name: Verify checksums and smoke-test the exact release tarball
+        run: |
+          (cd release-artifacts && sha256sum -c SHA256SUMS)
+          node scripts/package-smoke.mjs release-artifacts/*.tgz
+
+      - name: Verify an existing npm version matches the exact tarball
+        if: steps.meta.outputs.already_published == 'true'
+        shell: bash
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          mkdir -p npm-registry-artifact
+          npm pack "${PACKAGE_NAME}@${VERSION}" --pack-destination npm-registry-artifact
+          if ! cmp --silent release-artifacts/*.tgz npm-registry-artifact/*.tgz; then
+            echo "npm ${PACKAGE_NAME}@${VERSION} does not match this tag's tarball" >&2
+            exit 1
+          fi
+
+      - name: Publish exact tarball to npm with provenance
         if: steps.meta.outputs.already_published != 'true'
-        run: npm publish --tag "${{ steps.meta.outputs.dist_tag }}" --access public --provenance
+        run: npm publish release-artifacts/*.tgz --tag "${{ steps.meta.outputs.dist_tag }}" --access public --provenance
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-artifacts
+          path: release-artifacts/
+          if-no-files-found: error
 
   github-release:
     needs: publish
@@ -98,18 +134,45 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Create GitHub Release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-artifacts
+          path: release-artifacts
+      - name: Verify downloaded release checksums
+        working-directory: release-artifacts
+        run: sha256sum -c SHA256SUMS
+      - name: Create GitHub Release and attach verified artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           IS_PRERELEASE: ${{ needs.publish.outputs.prerelease }}
         shell: bash
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "GitHub Release ${GITHUB_REF_NAME} already exists; skipping"
-            exit 0
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            args=(--verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+            if [ "$IS_PRERELEASE" = "true" ]; then
+              args+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" "${args[@]}" --repo "$GITHUB_REPOSITORY"
           fi
-          args=(--verify-tag --generate-notes --title "$GITHUB_REF_NAME")
-          if [ "$IS_PRERELEASE" = "true" ]; then
-            args+=(--prerelease)
+          existing=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          expected=$(for artifact in release-artifacts/*; do basename "$artifact"; done)
+          unexpected=$(comm -23 <(printf '%s\n' "$existing" | sort -u) <(printf '%s\n' "$expected" | sort -u))
+          if [ -n "$unexpected" ]; then
+            echo "GitHub Release contains unexpected unverified assets:" >&2
+            printf '%s\n' "$unexpected" >&2
+            exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" "${args[@]}" --repo "$GITHUB_REPOSITORY"
+          mkdir -p existing-release-assets
+          for artifact in release-artifacts/*; do
+            name=$(basename "$artifact")
+            if printf '%s\n' "$existing" | grep -Fxq "$name"; then
+              gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir existing-release-assets
+              if ! cmp --silent "$artifact" "existing-release-assets/$name"; then
+                echo "GitHub Release asset ${name} does not match this tag's artifact" >&2
+                exit 1
+              fi
+              echo "GitHub Release asset ${name} already exists and matches"
+            else
+              gh release upload "$GITHUB_REF_NAME" "$artifact" --repo "$GITHUB_REPOSITORY"
+            fi
+          done

@@ -28,6 +28,14 @@ export const GUARDIAN_MAX_IMAGE_ITEM_TOKENS = 10_000
 /** Explicit evidence marker used whenever visual content cannot reach the reviewer. */
 export const REVIEW_IMAGE_OMITTED_TEXT = '[image omitted — reviewer cannot verify visual content]'
 
+/** Fail-closed signal raised before provider transmission when exact text cannot fit. */
+export class ReviewInputTooLargeError extends Error {
+  constructor() {
+    super('ai-approval: reviewer input exceeds maxInputBytes')
+    this.name = 'ReviewInputTooLargeError'
+  }
+}
+
 /** Privacy-safe audit facts for the visual context projected into one request. */
 export interface ReviewImageStats {
   admitted: number
@@ -436,17 +444,21 @@ export function buildReviewContext(
       : transcript.omitted || history !== safe
         ? '\nSome transcript entries were omitted or truncated.\n'
         : ''
+  const text = [
+    '## Current user and agent context',
+    history,
+    omission,
+    ...(visualNote ? [visualNote, ''] : []),
+    ...(imageIndex ? [imageIndex, ''] : []),
+    actionSection,
+    '',
+    output,
+  ].join('\n')
+  if (Buffer.byteLength(text, 'utf8') > config.maxInputBytes) {
+    throw new ReviewInputTooLargeError()
+  }
   return {
-    text: [
-      '## Current user and agent context',
-      history,
-      omission,
-      ...(visualNote ? [visualNote, ''] : []),
-      ...(imageIndex ? [imageIndex, ''] : []),
-      actionSection,
-      '',
-      output,
-    ].join('\n'),
+    text,
     images: visuals.blocks,
     imageStats: visuals.stats,
   }

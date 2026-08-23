@@ -84,7 +84,7 @@ function apiFixture(mutate = vi.fn()) {
           hasDocument: true,
           namespaces: [
             {
-              ns: 'ai-approval-reviewer',
+              ns: 'dsh-ai-approval',
               value: state.selection,
               revision: state.revision,
             },
@@ -124,7 +124,7 @@ describe('reviewer model selector UI', () => {
     const api = apiFixture(
       vi.fn(async () =>
         ok({
-          ns: 'ai-approval-reviewer',
+          ns: 'dsh-ai-approval',
           value: { provider: 'local', model: 'reviewer' },
           revision: 4,
         }),
@@ -133,7 +133,7 @@ describe('reviewer model selector UI', () => {
     const page = render(api, [state, undefined, false])
     const pageNodes = nodes(page)
     expect(page.type).toBe('section')
-    expect(page.props['aria-labelledby']).toBe('ai-approval-reviewer-title')
+    expect(page.props['aria-labelledby']).toBe('dsh-ai-approval-title')
     expect(JSON.stringify(page.props.children)).toContain('AI 审批')
     expect(JSON.stringify(page.props.children)).toContain('Codex Auto Review')
     expect(JSON.stringify(page.props.children)).toContain('视觉')
@@ -202,7 +202,7 @@ describe('reviewer model selector UI', () => {
     expect(ctx.slots.register).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'settings.section',
-        id: 'ai-approval-reviewer',
+        id: 'dsh-ai-approval',
         order: 70,
         label: 'AI 审批',
       }),

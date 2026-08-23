@@ -18,6 +18,6 @@ export default defineConfig({
     ],
   },
   banner:
-    'window.__ModuleLoader__.load({ id: "ai-approval-reviewer", factory: (require) => { var module = { exports: {} }; var exports = module.exports;',
+    'window.__ModuleLoader__.load({ id: "dsh-ai-approval", factory: (require) => { var module = { exports: {} }; var exports = module.exports;',
   footer: 'return module.exports; } });',
 })

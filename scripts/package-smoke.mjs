@@ -1,7 +1,7 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, realpathSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -18,16 +18,23 @@ const npmEnv = {
   npm_config_update_notifier: 'false',
 }
 try {
-  const tarball = execFileSync('npm', ['pack', '--silent', '--pack-destination', temp], {
-    cwd: root,
-    encoding: 'utf8',
-    env: npmEnv,
-  })
-    .trim()
-    .split(/\r?\n/)
-    .pop()
-  const tarballPath = join(temp, tarball)
-  if (!existsSync(tarballPath)) throw new Error(`npm pack did not create ${tarballPath}`)
+  if (process.argv.length > 3) throw new Error('package smoke accepts exactly one tarball path')
+  const suppliedTarball = process.argv[2]
+  const tarballPath =
+    suppliedTarball === undefined
+      ? join(
+          temp,
+          execFileSync('npm', ['pack', '--silent', '--pack-destination', temp], {
+            cwd: root,
+            encoding: 'utf8',
+            env: npmEnv,
+          })
+            .trim()
+            .split(/\r?\n/)
+            .pop(),
+        )
+      : resolve(root, suppliedTarball)
+  if (!existsSync(tarballPath)) throw new Error(`package tarball does not exist: ${tarballPath}`)
   const entries = execFileSync('tar', ['-tzf', tarballPath], { encoding: 'utf8' })
     .split(/\r?\n/)
     .filter(Boolean)
@@ -45,6 +52,7 @@ try {
     `package/lib/client/index.d.ts`,
     `package/lib/types.js`,
     `package/lib/types.d.ts`,
+    `package/scripts/repair-ai-approval-history.mjs`,
     packagedBundlePatch,
   ]) {
     if (!entries.includes(required)) throw new Error(`tarball is missing ${required}`)
@@ -62,7 +70,7 @@ try {
       '--no-audit',
       '--no-fund',
       ...peerSpecs,
-      join(temp, tarball),
+      tarballPath,
     ],
     {
       cwd: temp,
@@ -77,11 +85,13 @@ try {
   }
   const installedBundlePatch = readFileSync(join(installed, bundlePatch), 'utf8')
   for (const [name, pattern] of [
+    ['package plugin identity', /id:\s*dsh-ai-approval/],
     ['bounded reviewer context', /contextMode:\s*bounded/],
     ['high risk threshold', /maxRisk:\s*high/],
     ['high authorization threshold', /minAuthorization:\s*high/],
     ['disabled reasoning effort', /reasoningEffort:\s*['"]?off['"]?/],
     ['default image omission', /imageMode:\s*omit/],
+    ['bounded text bytes', /maxInputBytes:\s*48000/],
     ['bounded image count', /maxImages:\s*8/],
     ['bounded image bytes', /maxImageBytes:\s*16777216/],
   ]) {
@@ -98,9 +108,40 @@ try {
   }
   writeFileSync(
     join(temp, 'import.mjs'),
-    `const module = await import(${JSON.stringify(packageJson.name)})\nif (!module || typeof module !== 'object') throw new Error('package import returned no module')\n`,
+    `const module = await import(${JSON.stringify(packageJson.name)})
+if (!module || typeof module !== 'object') throw new Error('package import returned no module')
+const commands = []
+const commandScope = {
+  commands: { register(definition) { commands.push(definition); return () => undefined } },
+  permissionPresets: { current() { return 'ai-approval' } },
+  effect(setup) { return setup() },
+}
+const context = {
+  inject(dependencies, callback) {
+    if (dependencies.includes('commands')) callback(commandScope)
+  },
+}
+module.apply(context, { provider: 'smoke-provider', model: 'smoke-model' })
+const names = commands.map((definition) => definition.name).sort()
+if (JSON.stringify(names) !== JSON.stringify(['ai-approval', 'ai-approval-models'])) {
+  throw new Error('packaged plugin did not register operator commands')
+}
+if (commands.find((definition) => definition.name === 'ai-approval')?.recordInput !== false) {
+  throw new Error('packaged status command would persist raw input')
+}
+`,
   )
   execFileSync(process.execPath, ['import.mjs'], { cwd: temp, stdio: 'inherit' })
+  const repairBin = spawnSync(
+    join(temp, 'node_modules', '.bin', 'ai-approval-repair-history'),
+    [],
+    { encoding: 'utf8' },
+  )
+  if (repairBin.status !== 2 || !repairBin.stderr.includes('用法：')) {
+    throw new Error(
+      `packaged history repair bin did not expose its safe usage error (status=${String(repairBin.status)}, stderr=${JSON.stringify(repairBin.stderr)})`,
+    )
+  }
   const resolved = execFileSync(
     process.execPath,
     ['-e', `console.log(require.resolve(${JSON.stringify(`${packageJson.name}/package.json`)}))`],

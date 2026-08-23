@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -69,6 +69,7 @@ describe('legacy AI approval history repair', () => {
         ].join('\n'),
       )
       execFileSync('zstd', ['--quiet', '--force', source, '-o', compressed])
+      await chmod(compressed, 0o600)
       const original = await readFile(compressed)
 
       const result = await repairHistory(compressed)
@@ -86,7 +87,9 @@ describe('legacy AI approval history repair', () => {
         type: 'ai-approval/review-started',
         ignorable: true,
       })
+      expect(result.backup).toMatch(/\.bak-ai-approval-\d+-[0-9a-f-]{36}$/)
       expect(await readFile(result.backup)).toEqual(original)
+      expect((await stat(compressed)).mode & 0o777).toBe(0o600)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

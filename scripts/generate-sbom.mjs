@@ -21,7 +21,7 @@ function purl(name, version) {
 const components = new Map()
 const dependencies = new Map()
 
-function addComponent(name, version, properties = []) {
+function addComponent(name, version) {
   const ref = purl(name, version)
   if (!components.has(ref)) {
     components.set(ref, {
@@ -30,7 +30,6 @@ function addComponent(name, version, properties = []) {
       version,
       'bom-ref': ref,
       purl: ref,
-      ...(properties.length === 0 ? {} : { properties }),
     })
   }
   return ref
@@ -49,14 +48,14 @@ const rootRef = purl(packageJson.name, packageJson.version)
 const rootDependencies = Object.entries(listed.dependencies ?? {}).map(([name, node]) =>
   visit(name, node),
 )
-for (const [name, version] of Object.entries(packageJson.peerDependencies ?? {})) {
-  rootDependencies.push(
-    addComponent(name, version, [
-      { name: 'ai-approval-reviewer:relationship', value: 'peerDependency' },
-    ]),
-  )
-}
 dependencies.set(rootRef, [...new Set(rootDependencies)].sort())
+
+const peerProperties = Object.entries(packageJson.peerDependencies ?? {})
+  .sort(([left], [right]) => left.localeCompare(right))
+  .map(([name, range]) => ({
+    name: `dsh-ai-approval:peerDependency:${name}`,
+    value: String(range),
+  }))
 
 const bom = {
   bomFormat: 'CycloneDX',
@@ -69,9 +68,10 @@ const bom = {
       version: packageJson.version,
       'bom-ref': rootRef,
       purl: rootRef,
+      ...(peerProperties.length === 0 ? {} : { properties: peerProperties }),
     },
     tools: {
-      components: [{ type: 'application', name: 'ai-approval-reviewer-sbom', version: '1' }],
+      components: [{ type: 'application', name: 'dsh-ai-approval-sbom', version: '1' }],
     },
   },
   components: [...components.values()].sort((left, right) =>
@@ -82,8 +82,39 @@ const bom = {
     .map(([ref, dependsOn]) => ({ ref, dependsOn })),
 }
 
+function validateBom(value) {
+  if (value.bomFormat !== 'CycloneDX' || value.specVersion !== '1.6') {
+    throw new Error('SBOM must use CycloneDX 1.6')
+  }
+  const refs = new Set([rootRef, ...value.components.map((component) => component['bom-ref'])])
+  if (refs.size !== value.components.length + 1)
+    throw new Error('SBOM contains duplicate bom-ref values')
+  for (const component of value.components) {
+    if (typeof component.version !== 'string' || /^[*<>=~^]|\s\|\|\s/.test(component.version)) {
+      throw new Error(
+        `SBOM component ${component.name} has a dependency range instead of a version`,
+      )
+    }
+  }
+  for (const dependency of value.dependencies) {
+    if (!refs.has(dependency.ref))
+      throw new Error(`SBOM dependency ref is unknown: ${dependency.ref}`)
+    for (const ref of dependency.dependsOn) {
+      if (!refs.has(ref)) throw new Error(`SBOM dependsOn ref is unknown: ${ref}`)
+    }
+  }
+  for (const property of peerProperties) {
+    if (!property.name.startsWith('dsh-ai-approval:peerDependency:')) {
+      throw new Error('SBOM peer dependency property is malformed')
+    }
+  }
+}
+
+validateBom(bom)
 if (process.argv.includes('--check')) {
-  console.log(`SBOM checks passed (${bom.components.length} components)`)
+  console.log(
+    `SBOM checks passed (${bom.components.length} resolved components, ${peerProperties.length} peer ranges)`,
+  )
 } else {
   process.stdout.write(`${JSON.stringify(bom, null, 2)}\n`)
 }

@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve `ai-approval-reviewer`. Contributions must preserve the independent reviewer boundary and fail-closed behavior.
+Thank you for helping improve `dsh-ai-approval`. Contributions must preserve the independent reviewer boundary and fail-closed behavior.
 
 ## Development setup
 
@@ -51,6 +51,6 @@ git tag "v$VERSION"
 git push origin main --follow-tags
 ```
 
-The **Release** workflow reruns all checks, requires the tag to match `package.json`, publishes through npm OIDC with provenance, and creates the GitHub Release. Prerelease versions use npm dist-tag `next`; stable versions use `latest`. Existing npm versions and GitHub Releases are skipped safely. Never reuse or overwrite a published version.
+The **Release** workflow reruns all checks, requires the tag to match `package.json`, packs one exact tarball, publishes that tarball through npm OIDC with provenance, and attaches the tarball, CycloneDX SBOM, and `SHA256SUMS` to the GitHub Release. Prerelease versions use npm dist-tag `next`; stable versions use `latest`. Existing npm versions and release assets are reused only after byte-for-byte verification against the tag artifacts. Never reuse or overwrite a published version.
 
 `pnpm release -- --dry-run` is available as a local package preview. Running `pnpm release` without `--dry-run` is an authenticated manual fallback, not the preferred release path.

@@ -136,6 +136,68 @@ describe('approval reviewer policy helpers', () => {
     expect(redacted).toBe(
       '{"token": "<redacted>","authorization": "<redacted>","password": "<redacted>"}',
     )
+
+    const credentialUrl = [
+      'postgres://',
+      'alice',
+      ':',
+      'database-password',
+      '@db.example/app',
+    ].join('')
+    const basicAuth = `curl --user ${'alice'}:${'basic-password'} https://example.test`
+    const compactBasicAuth = [
+      'curl -u',
+      'alice',
+      ':',
+      'compact-password',
+      ' https://example.test',
+    ].join('')
+    const basicHeader = Buffer.from(['http-user', 'http-password'].join(':')).toString('base64')
+    const jwt = ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiIxMjM0NTY3ODkwIn0', 'signature0123456789'].join(
+      '.',
+    )
+    const googleKey = `AIza${'A'.repeat(35)}`
+    const variants = redactSensitiveText(
+      [
+        'authorization=Bearer equals-secret',
+        credentialUrl,
+        basicAuth,
+        compactBasicAuth,
+        `Authorization: Basic ${basicHeader}`,
+        `Proxy-Authorization=Basic ${basicHeader}`,
+        JSON.stringify({ 'Proxy-Authorization': `Basic ${basicHeader}` }),
+        `Basic ${basicHeader}`,
+        'Cookie: SID=primary-secret; secondary=secondary-secret',
+        `<password>${'xml-secret'}</password>`,
+        jwt,
+        googleKey,
+      ].join('\n'),
+    )
+    for (const secret of [
+      'equals-secret',
+      'database-password',
+      'basic-password',
+      'compact-password',
+      'http-password',
+      basicHeader,
+      'primary-secret',
+      'secondary-secret',
+      'xml-secret',
+      jwt,
+      googleKey,
+    ]) {
+      expect(variants).not.toContain(secret)
+    }
+    expect(redactSensitiveText(variants)).toBe(variants)
+
+    const action =
+      "curl -H 'Cookie: SID=cookie-primary; secondary=cookie-secondary' https://target.test && echo suffix-action"
+    const redactedAction = redactSensitiveText(action)
+    expect(redactedAction).not.toContain('cookie-primary')
+    expect(redactedAction).not.toContain('cookie-secondary')
+    expect(redactedAction).toMatch(/'Cookie:\s*<redacted>'/)
+    expect(redactedAction).toContain('https://target.test && echo suffix-action')
+    expect(redactSensitiveText(redactedAction)).toBe(redactedAction)
   })
 
   it('validates and freezes the reviewer route', () => {
@@ -200,12 +262,23 @@ describe('approval reviewer policy helpers', () => {
     expect(prompt).toContain('Exact action awaiting approval')
     expect(prompt).toContain('gh repo view private/repo')
     expect(prompt).toContain('Please inspect the repository.')
-    const smallPrompt = buildReviewPrompt(request, execution, {
-      ...options,
-      maxInputBytes: 256,
-    })
-    expect(smallPrompt).toContain('gh repo view private/repo')
-    expect(smallPrompt).toContain('Some transcript entries were omitted or truncated.')
+    expect(() =>
+      buildReviewPrompt(request, execution, {
+        ...options,
+        maxInputBytes: 256,
+      }),
+    ).toThrow(/input exceeds maxInputBytes/)
+
+    const oversizedExecution = {
+      ...execution,
+      arguments: { command: 'x'.repeat(100_000) },
+    } as unknown as Readonly<ToolExecution>
+    expect(() =>
+      buildReviewPrompt(request, oversizedExecution, {
+        ...options,
+        maxInputBytes: 2_000,
+      }),
+    ).toThrow(/input exceeds maxInputBytes/)
   })
 
   it('keeps the first and latest user tasks while budgeting tool evidence separately', () => {

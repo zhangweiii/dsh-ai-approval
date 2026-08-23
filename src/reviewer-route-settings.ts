@@ -8,7 +8,7 @@ import {
   type ReviewerRouteSettings,
 } from './config.js'
 
-export const REVIEWER_SETTINGS_NAMESPACE = 'ai-approval-reviewer'
+export const REVIEWER_SETTINGS_NAMESPACE = 'dsh-ai-approval'
 
 interface SettingsScope<T> {
   get(): T
@@ -34,6 +34,10 @@ export class ReviewerRouteSource {
 
   get(): Readonly<ReviewerRoute> {
     return this.current()
+  }
+
+  isWritable(): boolean {
+    return this.replace !== undefined
   }
 
   use(source: () => ReviewerRouteSettings): void {

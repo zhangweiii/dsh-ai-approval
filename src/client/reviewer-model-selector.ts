@@ -9,7 +9,7 @@ import {
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ReviewerRoute } from '../config.js'
 
-const SETTINGS_NAMESPACE = 'ai-approval-reviewer'
+const SETTINGS_NAMESPACE = 'dsh-ai-approval'
 export const CODEX_AUTO_REVIEW_MODEL = 'codex-auto-review'
 
 interface RpcErrorView {
@@ -332,7 +332,7 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
     'section',
     {
       style: pageStyle,
-      'aria-labelledby': 'ai-approval-reviewer-title',
+      'aria-labelledby': 'dsh-ai-approval-title',
       'aria-busy': saving,
     },
     createElement(
@@ -359,7 +359,7 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
         null,
         createElement(
           'h2',
-          { id: 'ai-approval-reviewer-title', style: { margin: 0, fontSize: 20, lineHeight: 1.4 } },
+          { id: 'dsh-ai-approval-title', style: { margin: 0, fontSize: 20, lineHeight: 1.4 } },
           zh ? 'AI 审批' : 'AI approval',
         ),
         createElement(
@@ -675,7 +675,7 @@ export function installReviewerModelSelector(ctx: ClientContext): void {
     slots.register(
       {
         name: 'settings.section',
-        id: 'ai-approval-reviewer',
+        id: 'dsh-ai-approval',
         order: 70,
         label: isChinese() ? 'AI 审批' : 'AI approval',
       },

@@ -13,7 +13,7 @@ describe('/ai-approval-models Web picker', () => {
   it('lists every DSH model as a selectable option and saves the selected route', async () => {
     const mutate = vi.fn(async () =>
       ok({
-        ns: 'ai-approval-reviewer',
+        ns: 'dsh-ai-approval',
         value: { provider: 'openai', model: 'gpt-5.2', reasoningEffort: 'medium' },
         revision: 5,
       }),
@@ -58,7 +58,7 @@ describe('/ai-approval-models Web picker', () => {
             hasDocument: true,
             namespaces: [
               {
-                ns: 'ai-approval-reviewer',
+                ns: 'dsh-ai-approval',
                 value: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
                 revision: 4,
               },
@@ -101,7 +101,7 @@ describe('/ai-approval-models Web picker', () => {
 
     await decoration!.ui.onSelect(options[2]!, { sessionId: 'session-1' as never })
     expect(mutate).toHaveBeenCalledWith({
-      ns: 'ai-approval-reviewer',
+      ns: 'dsh-ai-approval',
       expectedRevision: 4,
       ops: [
         { op: 'set', path: ['provider'], value: 'openai' },

@@ -86,6 +86,7 @@ function installFixture(settingsRoute?: ReviewerRoute) {
     emit: (event: string, _session: unknown, data: unknown) => {
       if (event.startsWith('ai-approval/review')) reviewEvents.push({ type: event, data })
     },
+    effect: (setup: () => unknown) => setup(),
     inject: (_dependencies: unknown, callback: (scope: any) => void) => {
       callback(scope)
     },
@@ -141,7 +142,7 @@ describe('approval reviewer runtime', () => {
       data: {
         commandId: expect.stringMatching(/^ai-approval-/),
         name: 'ai-approval',
-        source: { kind: 'plugin', plugin: 'ai-approval-reviewer' },
+        source: { kind: 'plugin', plugin: 'dsh-ai-approval' },
       },
     })
     expect(fixture.appended[1]).toMatchObject({

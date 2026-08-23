@@ -4,6 +4,13 @@ All notable changes are documented here. This project is pre-release; configurat
 
 ## 0.1.1-rc.2
 
+- Renamed the public package, plugin row, settings namespace, browser module, and audit source to `dsh-ai-approval` before the first public release.
+- Made `maxInputBytes` a fail-closed ceiling over combined reviewer system and user text. An exact action that cannot fit intact now returns `input-too-large` before provider preparation and is not retried.
+- Expanded credential redaction for Bearer and Basic authorization headers (including proxy and structured forms), multi-cookie headers, credentialed URLs, compact CLI basic auth, XML credential fields, JWTs, and Google-style keys while preserving shell/JSON delimiters and non-secret action suffixes.
+- Serialized distinct in-session reviews so concurrent denials or provider failures cannot collapse fail-closed threshold counters; cancelled queued calls no longer start a provider request, and local oversized-input failures no longer poison the provider circuit.
+- Added `/ai-approval status` and `/ai-approval doctor` for activation, route, policy, privacy, settings, and limit diagnostics without contacting the reviewer provider or durably recording raw command input.
+- Expanded secret scanning to current files and all reachable Git-history blobs, represented peer dependency ranges accurately in the SBOM, classified prereleases from SemVer core versions, and attached the exact npm tarball, SBOM, and checksums to production GitHub Releases.
+- Smoke-test the exact release tarball, including packaged command registration and the history-repair executable; fixed npm-bin symlink detection and made permission-preserving repair backups exclusive and collision-resistant.
 - Added single-route multimodal approval review using DSH 0.1.1-rc.2 prepared-call modality metadata. Vision models require persisted `imageMode: allow` consent; existing and manual routes default to `omit`, and `action-only` never sends transcript images.
 - Added nested-image discovery across the complete bounded-context candidate set, attachment-id deduplication with conflicting-metadata rejection, newer-first admission, non-truncating attachment indexes, prepared-context reservation, and independent default limits of 10,000 estimated tokens, 8 images, and 16 MiB raw bytes.
 - Added explicit image-omission warnings and deterministic fail-closed policy blocks: omitted visual evidence and text-only fallback after a failed image-bearing attempt cannot auto-approve. Audit events and cards retain final and cumulative disclosure facts.
@@ -31,7 +38,7 @@ All notable changes are documented here. This project is pre-release; configurat
   selection through the same Settings namespace used by the Web page.
 - Raised the bundled end-to-end reviewer deadline from 30 to 60 seconds after slow routes were
   observed consistently reaching the former deadline before completing; timeouts still fail closed.
-- Added a DSH Bundle manifest and patch so `dsh plugin --profile web add ai-approval-reviewer`
+- Added a DSH Bundle manifest and patch so `dsh plugin --profile web add dsh-ai-approval`
   installs the reviewer and its `ai-approval` permission preset without manual profile edits.
 - Stopped persisting package-owned review events because DSH offers no API for third-party packages
   to write ignorable durable events (verified still true in 0.1.1-rc.2), which made other Harness

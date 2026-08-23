@@ -50,7 +50,7 @@ describe('reviewer model selector data flow', () => {
             hasDocument: true,
             namespaces: [
               {
-                ns: 'ai-approval-reviewer',
+                ns: 'dsh-ai-approval',
                 value: { provider: 'openai', model: 'gpt-5.2', reasoningEffort: 'medium' },
                 revision: 4,
               },
@@ -102,7 +102,7 @@ describe('reviewer model selector data flow', () => {
             hasDocument: true,
             namespaces: [
               {
-                ns: 'ai-approval-reviewer',
+                ns: 'dsh-ai-approval',
                 value: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
                 revision: 1,
               },
@@ -129,7 +129,7 @@ describe('reviewer model selector data flow', () => {
         mutate: async (request: unknown) => {
           requests.push(request)
           return ok({
-            ns: 'ai-approval-reviewer',
+            ns: 'dsh-ai-approval',
             value: { provider: 'local', model: 'reviewer' },
             revision: 8,
           })
@@ -140,7 +140,7 @@ describe('reviewer model selector data flow', () => {
     const saved = await saveReviewerModelSelection(api, { provider: 'local', model: 'reviewer' }, 7)
     expect(requests).toEqual([
       {
-        ns: 'ai-approval-reviewer',
+        ns: 'dsh-ai-approval',
         expectedRevision: 7,
         ops: [
           { op: 'set', path: ['provider'], value: 'local' },

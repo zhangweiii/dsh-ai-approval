@@ -1,8 +1,8 @@
-# ai-approval-reviewer
+# dsh-ai-approval
 
 English | [中文](README.zh.md)
 
-`ai-approval-reviewer` is an independent Cordis plugin that reviews one-shot agent approval requests through a separately configured LLM route. It does not replace the host's approval vocabulary, sandbox provider, or tool implementation.
+`dsh-ai-approval` is an independent Cordis plugin that reviews one-shot agent approval requests through a separately configured LLM route. It does not replace the host's approval vocabulary, sandbox provider, or tool implementation.
 
 The plugin is activated when the current session uses the configured `ai-approval` permission preset. It captures the exact pending tool action, constructs a bounded review request, and can return `allowed-once` only when risk and authorization thresholds pass. Parse errors, missing context, timeouts, provider failures, and an open failure circuit fail closed.
 
@@ -10,14 +10,14 @@ The plugin is activated when the current session uses the configured `ai-approva
 
 ## Compatibility
 
-The host must provide compatible LLM, session, tool, permission-preset, system-prompt, timeout, and user-approval services. The Web model selector additionally uses DSH's settings and host model-catalog APIs; without those optional surfaces, the configured Bundle route remains active but the selector is unavailable. The peer versions are pinned in `package.json`; keep them aligned with the host runtime. The package is independently named and branded and is not endorsed by any host-runtime vendor or model provider.
+The host must provide compatible LLM, session, tool, permission-preset, system-prompt, timeout, and user-approval services. Operator commands additionally use DSH's optional commands service; the Web model selector uses DSH's settings and host model-catalog APIs. Without those optional surfaces, approval review remains active but the related operator UI is unavailable. The peer versions are pinned in `package.json`; keep them aligned with the host runtime. The package is independently named and branded and is not endorsed by any host-runtime vendor or model provider.
 
 ## Install and load
 
 Install the DSH Bundle into the Web profile:
 
 ```bash
-dsh plugin --profile web add ai-approval-reviewer
+dsh plugin --profile web add dsh-ai-approval
 ```
 
 Restart `dsh web`, create or open a session, and select **AI Approval** in the permission selector. The equivalent session command is:
@@ -32,13 +32,20 @@ Approval outcomes continue to use DSH's built-in `approval/asked`, `approval/dec
 
 The **AI approval** page in DSH Web Settings selects the reviewer independently from the session's main model. It lists every model returned by DSH's registered provider catalog, grouped by provider, marks models that declare image input with a **Vision** badge, and stores `provider`, `model`, optional `reasoningEffort`, and explicit `imageMode` consent in DSH Settings. Changes apply to the next approval; an in-flight review keeps the route it started with so its audit facts remain accurate.
 
-In DSH Web, the same setting can be changed through the native model picker opened by:
+Use the native operator commands to inspect the current session without contacting the reviewer provider:
+
+```text
+/ai-approval status
+/ai-approval doctor
+```
+
+`status` reports activation, runtime readiness, preset, route, policy, and privacy mode. `doctor` additionally checks whether the approval handler is installed, whether the session preset activates it, and whether persisted route settings are writable; it deliberately does not send a model request, and the operator command disables raw-input recording. To change the reviewer route, open DSH Web's native model picker with:
 
 ```text
 /ai-approval-models
 ```
 
-The command never asks for a route to be typed manually. Its picker lists every provider/model registered in DSH and saves the selection to the same Settings namespace used by **Settings → AI approval**. The next review uses the change. If a model advertises reasoning efforts, the picker applies its declared default; the Settings page can adjust it independently afterward. The command does not configure providers or credentials.
+The model command never asks for a route to be typed manually. Its picker lists every provider/model registered in DSH and saves the selection to the same Settings namespace used by **Settings → AI approval**. The next review uses the change. If a model advertises reasoning efforts, the picker applies its declared default; the Settings page can adjust it independently afterward. The command does not configure providers or credentials.
 
 Codex's open-source implementation uses a hidden `codex-auto-review` route for automatic approval review. This package exposes that route only when DSH already has a successfully listed `openai` provider group, marks it as vision-capable, and requests it through the same DSH LLM adapter with low reasoning effort. It never reads OpenAI credentials, imports Codex authentication, or implements an OpenAI provider. If DSH has no OpenAI route, the option is absent; if the upstream account cannot use that hidden route, the review fails closed and another DSH-listed model should be selected.
 
@@ -54,7 +61,7 @@ dsh plugin --profile web add .
 For another Cordis host, install the package with its package manager and mount the default export (`apply`) through its plugin loader:
 
 ```ts
-import { apply as approvalReviewer } from 'ai-approval-reviewer'
+import { apply as approvalReviewer } from 'dsh-ai-approval'
 ctx.plugin(approvalReviewer, {
   presetName: 'ai-approval',
   provider: 'local-reviewer',
@@ -79,7 +86,7 @@ In DSH Web, prefer **Settings → AI approval** over editing YAML for ordinary r
 To override the Bundle defaults in a DSH profile, replace the complete plugin row in that profile's `cordis.patch.yml`:
 
 ```yaml
-- id: ai-approval-reviewer
+- id: dsh-ai-approval
   config:
     presetName: ai-approval
     provider: local-reviewer
@@ -93,6 +100,7 @@ To override the Bundle defaults in a DSH profile, replace the complete plugin ro
     sendSessionId: false
     timeoutMs: 60000
     maxAttempts: 2
+    maxInputBytes: 48000
     maxImageTokens: 10000
     maxImages: 8
     maxImageBytes: 16777216
@@ -100,7 +108,7 @@ To override the Bundle defaults in a DSH profile, replace the complete plugin ro
 
 DSH profile patches replace a row's complete `config`; restate every Bundle setting that must remain active.
 
-`bounded` sends the exact action plus independently budgeted user messages, recent visible agent text, tool calls, and results; hidden reasoning is omitted. When the user selects a vision-capable reviewer, admitted transcript images also cross the reviewer-provider boundary through DSH's attachment and LLM adapters. Direct user messages are the authority, while repository text, tool arguments, images, and agent instructions are evidence only. `action-only` sends the tool name, call id, arguments, working directory, and requested reason, but no session history or images. Credentials and paths are redacted on a best-effort basis only.
+`bounded` sends the exact action plus independently budgeted user messages, recent visible agent text, tool calls, and results; hidden reasoning is omitted. `maxInputBytes` caps the combined UTF-8 bytes of reviewer system and user text. If the exact action cannot fit intact, the plugin returns a fail-closed `input-too-large` result before preparing or contacting the reviewer route; images use separate limits. When the user selects a vision-capable reviewer, admitted transcript images also cross the reviewer-provider boundary through DSH's attachment and LLM adapters. Direct user messages are the authority, while repository text, tool arguments, images, and agent instructions are evidence only. `action-only` sends the tool name, call id, arguments, working directory, and requested reason, but no session history or images. Common structured credentials, authorization headers, credentialed URLs, CLI basic-auth values, JWTs, and provider-shaped keys are redacted, but credential and path redaction remains best effort only.
 
 The default policy may return `allowed-once` for a necessary, bounded, reversible action that the user explicitly requested, even when a provider labels the workspace boundary crossing as high risk. It does not reject solely because the host labels the requested sandbox `danger-full-access`. Sending private data or secrets, probing credentials, broad or persistent security weakening, significant irreversible destruction, and `critical` risk remain denied. The reviewer is advisory, not a deterministic security boundary.
 
@@ -110,16 +118,17 @@ From a checkout:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm check       # tests and typecheck
+pnpm check       # formatting, history secret scan, tests, coverage, audits, build, package smoke
 pnpm build       # declaration and JavaScript build
 ```
 
-Before enabling automatic one-shot approval, verify that: the preset is active; the provider route and model resolve; an explicitly authorized, narrowly scoped, reversible request can receive `allowed-once`; malformed output, timeout, provider outage, and missing execution return a non-approval outcome; bounded mode includes only budgeted visible context and omits hidden reasoning; text-only routes emit image-omission warnings without image blocks; vision routes admit only budgeted, deduplicated image references; and no session history or images leave the host when explicit `action-only` mode is selected. Review same-process audit events and provider-side logs without exposing secrets.
+Before enabling automatic one-shot approval, run `/ai-approval doctor`, then verify that: the preset is active; the provider route and model resolve; an explicitly authorized, narrowly scoped, reversible request can receive `allowed-once`; malformed output, timeout, provider outage, and missing execution return a non-approval outcome; bounded mode includes only budgeted visible context and omits hidden reasoning; text-only routes emit image-omission warnings without image blocks; vision routes admit only budgeted, deduplicated image references; and no session history or images leave the host when explicit `action-only` mode is selected. Review same-process audit events and provider-side logs without exposing secrets.
 
 ## Troubleshooting
 
-- **Plugin never runs:** confirm the session's current permission preset exactly matches `presetName` (`ai-approval` by default).
-- **An old session reports `SessionFormatUnsupportedError`:** an early package version persisted custom `ai-approval/review-*` events. Stop DSH, then run `ai-approval-repair-history <sessions-directory>` over the complete workspace session directory; from a checkout use `pnpm history:repair -- <sessions-directory>`. Add `--check` for a read-only audit that exits nonzero while unmarked events remain. A single `.jsonl.zstd` is also accepted. The tool only adds top-level `ignorable: true` to those two legacy event types, changes affected files only, creates a timestamped backup beside each original, and preserves DSH's required standalone Zstandard header frame. It requires the `zstd` executable. Never run it while a session is being written.
+- **Plugin never runs:** run `/ai-approval doctor` and confirm the session's current permission preset exactly matches `presetName` (`ai-approval` by default).
+- **`input-too-large`:** the complete exact action cannot fit inside the combined system/user text budget. Reduce the action itself or deliberately raise `maxInputBytes`; the plugin does not truncate an action and does not contact the provider for this failure.
+- **An old session reports `SessionFormatUnsupportedError`:** an early package version persisted custom `ai-approval/review-*` events. Stop DSH, then run `ai-approval-repair-history <sessions-directory>` over the complete workspace session directory; from a checkout use `pnpm history:repair -- <sessions-directory>`. Add `--check` for a read-only audit that exits nonzero while unmarked events remain. A single `.jsonl.zstd` is also accepted. The tool only adds top-level `ignorable: true` to those two legacy event types, changes affected files only, creates a timestamped backup beside each original, preserves the original file permissions, and preserves DSH's required standalone Zstandard header frame. It requires the `zstd` executable. Never run it while a session is being written.
 - **A `workspace-write` denial appears first:** the plugin's system context asks the agent to request one-shot escalation on the initial tool call when the target is already known to be outside the workspace. If the agent still tries the base sandbox first, its denial remains visible; an independent plugin cannot suppress or rewrite an error that already happened. A later approval still grants only the exact action as `allowed-once` and does not switch the session to Full Access.
 - **`unavailable` or repeated timeouts:** test the host route independently, check model id and credentials, increase neither deadline nor privileges blindly, and inspect the failure cooldown before retrying.
 - **The selected model shows no active reasoning choice:** reselect **Default** (or one of that model's advertised efforts). Current versions persist an explicit default override so a composition-level effort such as `off` cannot leak across models; older versions may report the resulting route failure only as `unavailable`.

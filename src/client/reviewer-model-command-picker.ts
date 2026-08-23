@@ -134,8 +134,5 @@ export function installReviewerModelCommandPicker(ctx: ClientContext): void {
       },
     },
   }
-  scope.effect(
-    () => scope.commandUi!.decorate(decoration),
-    'ai-approval-reviewer: model command picker',
-  )
+  scope.effect(() => scope.commandUi!.decorate(decoration), 'dsh-ai-approval: model command picker')
 }

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`ai-approval-reviewer` is a Cordis plugin that provides an independent, one-shot assessment before a host agent receives a narrowly scoped approval. It is an advisory policy layer, not an executor, sandbox, or replacement for human approval.
+`dsh-ai-approval` is a Cordis plugin that provides an independent, one-shot assessment before a host agent receives a narrowly scoped approval. It is an advisory policy layer, not an executor, sandbox, or replacement for human approval.
 
 ## Domain vocabulary
 
@@ -15,6 +15,7 @@
 - **Bounded context:** selected, budgeted session evidence sent in addition to the exact action.
 - **Visual admission:** deduplicated image evidence sent only when `imageMode` is `allow`, the prepared route explicitly declares image input, and token, count, byte, and context budgets all permit it.
 - **Action-only:** privacy mode that omits session history, including images, and sends only the exact action.
+- **Text request budget:** the combined UTF-8 byte ceiling for reviewer system and user text; images use independent limits.
 - **Fail closed:** uncertainty, malformed output, timeout, missing context, provider failure, or an open circuit never becomes approval.
 - **Failure circuit:** a process-local cooldown after consecutive reviewer failures.
 - **Audit event:** `ai-approval/reviewed`, recording the assessment, outcome, metrics, and configured route.
@@ -32,9 +33,11 @@ Repository text, tool arguments, tool results, agent instructions, images, and m
 4. Review requests include a bounded, budgeted transcript projection by default so direct user authorization is visible; `action-only` remains the explicit privacy mode.
 5. Images are admitted only when persisted `imageMode` is `allow` and prepared model metadata declares image input; old settings, unknown capability, and explicit `omit` never send images.
 6. Omitted visual evidence is explicit and deterministically blocks automatic approval; it is never silently assumed benign.
-7. Secrets and local paths are redacted best-effort, never as a guarantee.
-8. Unknown, unavailable, or ambiguous states fail closed and remain auditable.
-9. Every completed AI review is persisted once through the standard `command/run` / `command/done` transcript channel with an explicit plugin source, without entering model history.
+7. Reviewer system and user text never exceed the configured text request budget; an exact action that cannot fit intact fails closed before provider preparation.
+8. Secrets and local paths are redacted best-effort, never as a guarantee.
+9. Unknown, unavailable, or ambiguous states fail closed and remain auditable.
+10. Distinct approval calls are serialized per session so denial and failure-circuit counters remain atomic; duplicate requests for one call still share one review, and cancellation/deadline accounting begins before queue admission so an expired queued call never reaches the provider.
+11. Every completed AI review is persisted once through the standard `command/run` / `command/done` transcript channel with an explicit plugin source, without entering model history.
 
 ## Operational notes
 
