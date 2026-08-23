@@ -1,7 +1,13 @@
 import type { CallId, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
-import type { ReviewerAuthorization, ReviewerOutcome, ReviewerRisk } from './config.js'
+import type {
+  ReviewerAuthorization,
+  ReviewerImageMode,
+  ReviewerOutcome,
+  ReviewerRisk,
+} from './config.js'
 import type { AutoApprovalPolicyBlock } from './assessment.js'
+import type { ReviewImageAudit } from './review-context.js'
 import type { Session } from '@deepseek-ai/dsh-session'
 
 /** Stable identity shared by one review's start and terminal audit events. */
@@ -16,6 +22,7 @@ export interface AiApprovalReviewStartedData {
   provider: string
   model: string
   reasoningEffort?: string
+  imageMode?: ReviewerImageMode
 }
 
 /** Durable terminal assessment and the exact host approval outcome it produced. */
@@ -30,6 +37,7 @@ export interface AiApprovalReviewedData extends AiApprovalReviewStartedData {
   attempts: number
   durationMs: number
   usage?: TokenUsage
+  images?: ReviewImageAudit
 }
 
 declare module '@deepseek-ai/cordis' {

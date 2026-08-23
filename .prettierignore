@@ -3,3 +3,4 @@ lib/
 coverage/
 .pnpm-store/
 *.tgz
+pnpm-lock.yaml

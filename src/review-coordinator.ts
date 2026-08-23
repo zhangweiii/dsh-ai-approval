@@ -16,6 +16,7 @@ import {
   type ReviewerFailureDetail,
 } from './reviewer-model.js'
 import { privacyText } from './privacy.js'
+import type { ReviewImageAudit, ReviewImageStats } from './review-context.js'
 import type {
   ResolvedConfig,
   ReviewerAuthorization,
@@ -24,6 +25,7 @@ import type {
   ReviewerRisk,
 } from './config.js'
 import { ReviewerRouteSource } from './reviewer-route-settings.js'
+import type { AiApprovalReviewedData } from './types.js'
 export class ReviewCoordinator {
   private readonly denials = new WeakMap<Session, number>()
   private readonly failures = new WeakMap<Session, { consecutive: number; blockedUntil: number }>()
@@ -95,20 +97,54 @@ export class ReviewCoordinator {
     let attempts = 0,
       usage: TokenUsage | undefined,
       assessment: ReviewerAssessment | undefined,
+      imageStats: ReviewImageStats | undefined,
+      everAdmitted = 0,
+      everAdmittedBytes = 0,
+      everEstimatedTokens = 0,
+      imageBearingAttempts = 0,
+      fallbackUsed = false,
+      forceTextOnly = false,
       failure: unknown
+    const captureImages = (stats: ReviewImageStats | undefined) => {
+      if (stats === undefined) return
+      imageStats = stats
+      everAdmitted = Math.max(everAdmitted, stats.admitted)
+      everAdmittedBytes = Math.max(everAdmittedBytes, stats.admittedBytes)
+      everEstimatedTokens = Math.max(everEstimatedTokens, stats.estimatedTokens)
+      if (stats.admitted > 0) imageBearingAttempts++
+    }
     for (let i = 0; i < this.config.maxAttempts; i++) {
       attempts++
+      if (forceTextOnly) fallbackUsed = true
       try {
-        const g = await this.model.assess(request, execution, messages, d.signal, route)
+        const g = await this.model.assess(
+          request,
+          execution,
+          messages,
+          d.signal,
+          route,
+          forceTextOnly,
+        )
         usage = mergeUsage(usage, g.usage)
         assessment = g.assessment
+        captureImages(g.imageStats)
         break
       } catch (e) {
         failure = e
         if (e instanceof ReviewerGenerationError) {
           usage = mergeUsage(usage, e.usage)
+          captureImages(e.imageStats)
+          if (e.hadImages) forceTextOnly = true
         }
         if (request.signal?.aborted) {
+          const images = imageAuditOf(
+            imageStats,
+            everAdmitted,
+            everAdmittedBytes,
+            everEstimatedTokens,
+            imageBearingAttempts,
+            fallbackUsed,
+          )
           this.record(
             reviewId,
             s,
@@ -122,6 +158,7 @@ export class ReviewCoordinator {
               attempts,
               durationMs: Math.max(0, Date.now() - started),
               ...(usage ? { usage } : {}),
+              ...(images ? { images } : {}),
             },
             route,
           )
@@ -130,10 +167,19 @@ export class ReviewCoordinator {
         if (d.signal.aborted) break
       }
     }
+    const images = imageAuditOf(
+      imageStats,
+      everAdmitted,
+      everAdmittedBytes,
+      everEstimatedTokens,
+      imageBearingAttempts,
+      fallbackUsed,
+    )
     const metrics = {
       attempts,
       durationMs: Math.max(0, Date.now() - started),
       ...(usage ? { usage } : {}),
+      ...(images ? { images } : {}),
     }
     if (!assessment) {
       const consecutive = (fs?.consecutive ?? 0) + 1
@@ -163,12 +209,24 @@ export class ReviewCoordinator {
       s,
       history.map((m) => String(m.id)),
     )
-    const approved = canAutoApprove(assessment, this.config.maxRisk, this.config.minAuthorization)
-    const policyBlock = autoApprovalPolicyBlock(
+    const visualOmission = (imageStats?.omitted ?? 0) > 0
+    const approved =
+      !fallbackUsed &&
+      !visualOmission &&
+      canAutoApprove(assessment, this.config.maxRisk, this.config.minAuthorization)
+    const thresholdBlock = autoApprovalPolicyBlock(
       assessment,
       this.config.maxRisk,
       this.config.minAuthorization,
     )
+    const policyBlock =
+      assessment.outcome !== 'allow'
+        ? thresholdBlock
+        : fallbackUsed
+          ? { ...thresholdBlock, visualFallback: true as const }
+          : visualOmission
+            ? { ...thresholdBlock, visualOmission: true as const }
+            : thresholdBlock
     this.record(
       reviewId,
       s,
@@ -221,6 +279,7 @@ export class ReviewCoordinator {
       provider: route.provider,
       model: route.model,
       ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
+      imageMode: route.imageMode ?? 'omit',
     })
     return reviewId
   }
@@ -233,11 +292,16 @@ export class ReviewCoordinator {
     outcome: ReviewerOutcome,
     approvalOutcome: ApprovalOutcome,
     rationale: string,
-    metrics: { attempts: number; durationMs: number; usage?: TokenUsage },
+    metrics: {
+      attempts: number
+      durationMs: number
+      usage?: TokenUsage
+      images?: ReviewImageAudit
+    },
     route: Readonly<ReviewerRoute>,
     policyBlock?: AutoApprovalPolicyBlock,
   ) {
-    this.ctx.emit('ai-approval/reviewed', s, {
+    const data: AiApprovalReviewedData = {
       reviewId,
       ...(r.callId === undefined ? {} : { callId: r.callId }),
       toolName: r.toolName,
@@ -246,6 +310,7 @@ export class ReviewCoordinator {
       provider: route.provider,
       model: route.model,
       ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
+      imageMode: route.imageMode ?? 'omit',
       risk,
       authorization,
       outcome,
@@ -253,9 +318,103 @@ export class ReviewCoordinator {
       ...(policyBlock === undefined ? {} : { policyBlock }),
       rationale: privacyText(rationale, this.config.redactPaths),
       ...metrics,
-    })
+    }
+    this.ctx.emit('ai-approval/reviewed', s, data)
+    appendStandardReviewOutput(s, data)
   }
 }
+
+type StandardCommandAppender = {
+  (
+    type: 'command/run',
+    data: {
+      commandId: string
+      name: string
+      source: { kind: 'plugin'; plugin: 'ai-approval-reviewer' }
+    },
+  ): unknown
+  (
+    type: 'command/done',
+    data: {
+      commandId: string
+      kind: 'success'
+      text: string
+    },
+  ): unknown
+}
+
+/**
+ * Publish through DSH's durable command lifecycle, the standard transcript
+ * channel consumed by both Web and TUI without entering model history.
+ */
+function appendStandardReviewOutput(s: Session, review: AiApprovalReviewedData): void {
+  const append = s.append.bind(s) as unknown as StandardCommandAppender
+  const commandId = `ai-approval-${crypto.randomUUID()}`
+  append('command/run', {
+    commandId,
+    name: 'ai-approval',
+    source: { kind: 'plugin', plugin: 'ai-approval-reviewer' },
+  })
+  append('command/done', {
+    commandId,
+    kind: 'success',
+    text: formatReviewSummary(review),
+  })
+}
+
+function formatReviewSummary(review: AiApprovalReviewedData): string {
+  const result =
+    review.approvalOutcome === 'allowed-once'
+      ? '通过（仅本次）'
+      : review.approvalOutcome === 'rejected'
+        ? review.outcome === 'allow'
+          ? '未通过（本地策略限制）'
+          : '拒绝'
+        : review.approvalOutcome === 'cancelled'
+          ? '已取消'
+          : '不可用（未批准）'
+  const policy = formatPolicyBlock(review)
+  return [
+    `AI 审批：${result}｜危险级别：${review.risk}｜授权判断：${review.authorization}`,
+    `原因：${review.rationale}`,
+    ...(policy === undefined ? [] : [`策略限制：${policy}`]),
+    `审批模型：${review.provider}/${review.model}${review.reasoningEffort ? ` · ${review.reasoningEffort}` : ''}`,
+  ].join('\n')
+}
+
+function formatPolicyBlock(review: AiApprovalReviewedData): string | undefined {
+  const reasons = [
+    ...(review.policyBlock?.maxRisk === undefined
+      ? []
+      : [`风险超过上限 ${review.policyBlock.maxRisk}`]),
+    ...(review.policyBlock?.minAuthorization === undefined
+      ? []
+      : [`授权低于要求 ${review.policyBlock.minAuthorization}`]),
+    ...(review.policyBlock?.visualOmission ? ['存在未验证的视觉证据'] : []),
+    ...(review.policyBlock?.visualFallback ? ['携图审批失败后使用了纯文本回退'] : []),
+  ]
+  return reasons.length === 0 ? undefined : reasons.join('；')
+}
+
+function imageAuditOf(
+  finalStats: ReviewImageStats | undefined,
+  everAdmitted: number,
+  everAdmittedBytes: number,
+  everEstimatedTokens: number,
+  imageBearingAttempts: number,
+  fallbackUsed: boolean,
+): ReviewImageAudit | undefined {
+  if (finalStats === undefined) return undefined
+  return {
+    ...finalStats,
+    everAdmitted,
+    everAdmittedBytes,
+    everEstimatedTokens,
+    imageBearingAttempts,
+    fallbackUsed,
+  }
+}
+
 function failureDetail(error: unknown): ReviewerFailureDetail {
   return error instanceof ReviewerGenerationError ? error.detail : 'unknown'
 }

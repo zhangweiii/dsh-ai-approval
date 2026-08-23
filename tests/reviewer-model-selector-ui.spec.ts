@@ -46,6 +46,7 @@ const state: ReviewerModelState = {
         {
           id: 'codex-auto-review',
           name: 'Codex Auto Review',
+          inputModalities: ['text', 'image'],
           reasoning: {
             efforts: [
               { id: 'low', name: 'Low' },
@@ -63,7 +64,12 @@ const state: ReviewerModelState = {
     },
   ],
   failures: [],
-  selection: { provider: 'openai', model: 'codex-auto-review', reasoningEffort: 'low' },
+  selection: {
+    provider: 'openai',
+    model: 'codex-auto-review',
+    reasoningEffort: 'low',
+    imageMode: 'allow',
+  },
   writable: true,
   revision: 3,
 }
@@ -130,6 +136,7 @@ describe('reviewer model selector UI', () => {
     expect(page.props['aria-labelledby']).toBe('ai-approval-reviewer-title')
     expect(JSON.stringify(page.props.children)).toContain('AI 审批')
     expect(JSON.stringify(page.props.children)).toContain('Codex Auto Review')
+    expect(JSON.stringify(page.props.children)).toContain('视觉')
     expect(pageNodes.some((node) => node.type === 'select')).toBe(false)
     const localModel = pageNodes.find(
       (node) => node.type === 'button' && node.props['data-model-key'] === '["local","reviewer"]',
@@ -141,7 +148,8 @@ describe('reviewer model selector UI', () => {
         expectedRevision: 3,
         ops: expect.arrayContaining([
           { op: 'set', path: ['provider'], value: 'local' },
-          { op: 'unset', path: ['reasoningEffort'] },
+          { op: 'set', path: ['reasoningEffort'], value: null },
+          { op: 'set', path: ['imageMode'], value: 'omit' },
         ]),
       }),
     )

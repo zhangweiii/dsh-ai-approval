@@ -5,6 +5,7 @@ import {
   resolveReviewerRoute,
   type ResolvedConfig,
   type ReviewerRoute,
+  type ReviewerRouteSettings,
 } from './config.js'
 
 export const REVIEWER_SETTINGS_NAMESPACE = 'ai-approval-reviewer'
@@ -35,7 +36,7 @@ export class ReviewerRouteSource {
     return this.current()
   }
 
-  use(source: () => ReviewerRoute): void {
+  use(source: () => ReviewerRouteSettings): void {
     this.current = () => resolveReviewerRoute(source())
   }
 
@@ -73,12 +74,18 @@ export function installReviewerRouteSettings(
         ...(config.reasoningEffort === undefined
           ? {}
           : { reasoningEffort: config.reasoningEffort }),
+        imageMode: config.imageMode,
       },
       applies: 'live',
       validate: (value) => void resolveReviewerRoute(value),
     })
     source.use(() => route.get())
-    source.useWriter((selection) => route.replace(selection))
+    source.useWriter((selection) =>
+      route.replace({
+        ...selection,
+        reasoningEffort: selection.reasoningEffort ?? null,
+      }),
+    )
     scope.effect(() => () => source.reset())
   })
 }

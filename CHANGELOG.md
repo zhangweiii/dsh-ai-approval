@@ -4,6 +4,10 @@ All notable changes are documented here. This project is pre-release; configurat
 
 ## 0.1.1-rc.2
 
+- Added single-route multimodal approval review using DSH 0.1.1-rc.2 prepared-call modality metadata. Vision models require persisted `imageMode: allow` consent; existing and manual routes default to `omit`, and `action-only` never sends transcript images.
+- Added nested-image discovery across the complete bounded-context candidate set, attachment-id deduplication with conflicting-metadata rejection, newer-first admission, non-truncating attachment indexes, prepared-context reservation, and independent default limits of 10,000 estimated tokens, 8 images, and 16 MiB raw bytes.
+- Added explicit image-omission warnings and deterministic fail-closed policy blocks: omitted visual evidence and text-only fallback after a failed image-bearing attempt cannot auto-approve. Audit events and cards retain final and cumulative disclosure facts.
+- Marked vision-capable catalog models in Settings and `/ai-approval-models`, including the injected `codex-auto-review` candidate, and made selection persist the visual-consent boundary.
 - Aligned every `@deepseek-ai/*` peer and dev dependency, and the package version, with host
   runtime DSH 0.1.1-rc.2; added `@deepseek-ai/dsh-client-ui-slots` as a dev-only types dependency
   because the conversation client's published declarations import it without declaring a runtime
@@ -16,6 +20,13 @@ All notable changes are documented here. This project is pre-release; configurat
   grouped providers, route details, and reasoning controls.
 - Added live reviewer-route selection backed by the DSH model catalog and Settings service,
   including a guarded `codex-auto-review` candidate only for an active DSH OpenAI route.
+- Fixed model switching so choosing the provider default explicitly masks a composition-level
+  `reasoningEffort`; an inherited value such as `off` can no longer break a route that supports
+  only `high` or `max` before review begins.
+- Added a plain-text AI approval summary through DSH's standard `command/run` / `command/done`
+  transcript channel, including the one-shot outcome, risk, authorization, rationale, policy
+  block, and reviewer route. This is visible through both Web and TUI clients without requiring a
+  custom conversation component and cannot be overwritten by tool-owned `finalizeContent`.
 - Added `/ai-approval-models` to list DSH provider/model routes and persist a validated reviewer
   selection through the same Settings namespace used by the Web page.
 - Raised the bundled end-to-end reviewer deadline from 30 to 60 seconds after slow routes were

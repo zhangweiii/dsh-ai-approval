@@ -25,7 +25,7 @@ export function installReviewerModelCommand(ctx: Context, route: ReviewerRouteSo
         const current = route.get()
         const currentText = `${current.provider}/${current.model}${
           current.reasoningEffort === undefined ? '' : ` ${current.reasoningEffort}`
-        }`
+        } · images ${current.imageMode ?? 'omit'}`
         return {
           kind: 'success',
           text: `当前 AI 审批模型：${currentText}。请在 DSH Web 的命令选择器中切换模型。`,

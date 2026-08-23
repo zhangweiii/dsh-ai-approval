@@ -2,6 +2,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ReviewerRoute } from '../config.js'
 import {
   loadReviewerModelState,
+  reviewerModelAcceptsImages,
   saveReviewerModelSelection,
   type ReviewerCatalogModel,
   type ReviewerModelApi,
@@ -51,6 +52,7 @@ function optionId(selection: ReviewerRoute, revision: number): string {
     selection.provider,
     selection.model,
     selection.reasoningEffort ?? null,
+    selection.imageMode ?? 'omit',
     revision,
   ])
 }
@@ -60,13 +62,14 @@ function optionSelection(option: ReviewerSelectOption): {
   revision: number
 } {
   const value: unknown = JSON.parse(option.id)
-  if (!Array.isArray(value) || value.length !== 4)
+  if (!Array.isArray(value) || value.length !== 5)
     throw new Error('Invalid AI approval model option')
-  const [provider, model, reasoningEffort, revision] = value
+  const [provider, model, reasoningEffort, imageMode, revision] = value
   if (
     typeof provider !== 'string' ||
     typeof model !== 'string' ||
     (reasoningEffort !== null && typeof reasoningEffort !== 'string') ||
+    (imageMode !== 'omit' && imageMode !== 'allow') ||
     typeof revision !== 'number'
   )
     throw new Error('Invalid AI approval model option')
@@ -75,6 +78,7 @@ function optionSelection(option: ReviewerSelectOption): {
       provider,
       model,
       ...(reasoningEffort === null ? {} : { reasoningEffort }),
+      imageMode,
     },
     revision,
   }
@@ -93,14 +97,15 @@ export function reviewerModelSelectOptions(
         provider: group.id,
         model: model.id,
         ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+        imageMode: reviewerModelAcceptsImages(model) ? 'allow' : 'omit',
       }
       const effort = effortName(model, reasoningEffort)
       return {
         id: optionId(selection, state.revision),
         label: model.name,
         detail: `${group.name} · ${group.id}/${model.id}${
-          effort === undefined ? '' : ` · ${effort}`
-        }`,
+          reviewerModelAcceptsImages(model) ? ' · Vision · image sharing enabled' : ''
+        }${effort === undefined ? '' : ` · ${effort}`}`,
         ...(active ? { active: true } : {}),
       }
     }),

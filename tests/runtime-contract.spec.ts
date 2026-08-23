@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { Context } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import type { ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
-import type { ToolExecution } from '@deepseek-ai/dsh-tools'
+import { defineTool, ToolRuntime, type ToolExecution } from '@deepseek-ai/dsh-tools'
+import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import apply, { resolveConfig } from '../src/index.ts'
 
@@ -20,12 +21,28 @@ type FixtureOptions = {
   preset?: string
   config?: Record<string, unknown>
   steps?: Step[]
+  inputModalities?: Array<'text' | 'image'> | null
+  contextWindow?: number | null
 }
 
 const allow =
   '{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"The user explicitly requested this read-only check."}'
 const deny =
   '{"risk_level":"high","user_authorization":"low","outcome":"deny","rationale":"The action is not sufficiently authorized."}'
+
+let standardOutput: string[]
+
+beforeEach(() => {
+  standardOutput = []
+  vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any) => {
+    standardOutput.push(String(chunk))
+    return true
+  })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 function sessionFixture(id: string, cwd = '/Users/alice/private-repo') {
   const messages: any[] = [
@@ -104,9 +121,19 @@ function installFixture(options: FixtureOptions = {}) {
     if (step.kind === 'finish') yield { type: 'finish', reason: step.reason }
     else if (step.kind !== 'no-finish') yield { type: 'finish', reason: { kind: 'stop' } }
   }
+  const prepareCall = async (config: Record<string, unknown>) => ({
+    config,
+    ...(options.inputModalities === null
+      ? {}
+      : { inputModalities: options.inputModalities ?? ['text'] }),
+    ...(options.contextWindow === null
+      ? {}
+      : { context: { contextWindow: options.contextWindow ?? 128_000 } }),
+    stream,
+  })
   const preset = options.preset ?? 'ai-approval'
   const scope: any = {
-    llm: { stream },
+    llm: { prepareCall, stream },
     permissionPresets: { current: () => preset },
     systemPrompt: { context: () => undefined },
     on: (event: string, handler: Handler) => handlers.set(event, handler),
@@ -154,6 +181,16 @@ function starts(fixture: ReturnType<typeof installFixture>) {
 
 function approval(fixture: ReturnType<typeof installFixture>, request = fixture.request) {
   return fixture.handlers.get('approval/request')!(request, async () => 'rejected')
+}
+
+function visibleReviewSummary(fixture: ReturnType<typeof installFixture>): string {
+  return (
+    (
+      fixture.appended.find((event) => event.type === 'command/done')?.data as
+        | { text?: string }
+        | undefined
+    )?.text ?? ''
+  )
 }
 
 describe('runtime security contracts', () => {
@@ -222,11 +259,327 @@ describe('runtime security contracts', () => {
     })
   })
 
+  it('publishes unavailable reviewer details through the shared session transcript', async () => {
+    const fixture = installFixture({ steps: [{ kind: 'throw' }] })
+    await prepare(fixture)
+    await expect(approval(fixture)).resolves.toBe('unavailable')
+    expect(visibleReviewSummary(fixture)).toMatch(
+      /AI 审批：不可用（未批准）｜危险级别：high｜授权判断：unknown[\s\S]*原因：Reviewer unavailable: unknown/,
+    )
+    expect(standardOutput).toEqual([])
+  })
+
+  it('publishes reviewer denials through the shared session transcript', async () => {
+    const fixture = installFixture({
+      steps: [
+        {
+          kind: 'success',
+          assessment:
+            '{"risk_level":"high","user_authorization":"low","outcome":"deny","rationale":"The action is not sufficiently authorized.\\nHuman approval is required."}',
+        },
+      ],
+    })
+    await prepare(fixture)
+    await expect(approval(fixture)).resolves.toBe('rejected')
+    expect(visibleReviewSummary(fixture)).toBe(
+      'AI 审批：拒绝｜危险级别：high｜授权判断：low\n原因：The action is not sufficiently authorized.\nHuman approval is required.\n审批模型：test-provider/test-model',
+    )
+    expect(standardOutput).toEqual([])
+  })
+
+  it('keeps the shared session transcript when a tool finalizer replaces its result', async () => {
+    const fixture = installFixture()
+    await prepare(fixture)
+    await expect(approval(fixture)).resolves.toBe('allowed-once')
+
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    ctx.tools.register(
+      defineTool({
+        name: 'finalizing_tool',
+        description: 'Exercise the real DSH final-content boundary.',
+        parameters: {},
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        async execute() {
+          return 'tool body'
+        },
+        finalizeContent() {
+          return [{ type: 'text', text: 'definition-owned final content' }]
+        },
+      }),
+    )
+    ctx.on('tools/post-execute', async (_execution, result, next) => {
+      const decision = await next()
+      return {
+        ...decision,
+        content: [...result.content, { type: 'text', text: 'post-execute content' }],
+      }
+    })
+
+    const result = await ctx.tools.execute({
+      callId: CallId('finalizing-call'),
+      name: 'finalizing_tool',
+      arguments: {},
+      signal: new AbortController().signal,
+    })
+
+    expect(result.content).toEqual([{ type: 'text', text: 'definition-owned final content' }])
+    expect(visibleReviewSummary(fixture)).toMatch(/^AI 审批：通过（仅本次）｜危险级别：low/)
+    await ctx.fiber.dispose()
+  })
+
   it('passes an explicit reviewer reasoning effort to the provider route', async () => {
     const fixture = installFixture({ config: { reasoningEffort: 'off' } })
     await prepare(fixture)
     await expect(approval(fixture)).resolves.toBe('allowed-once')
     expect(fixture.providerOptions[0]).toMatchObject({ reasoningEffort: 'off' })
+  })
+
+  it('sends deduplicated image refs only when the prepared route declares vision', async () => {
+    const fixture = installFixture({
+      inputModalities: ['text', 'image'],
+      config: { imageMode: 'allow' },
+    })
+    const image = {
+      type: 'image',
+      attachment: {
+        attachmentId: 'image-1',
+        mediaType: 'image/png',
+        bytes: 1024,
+        width: 512,
+        height: 512,
+      },
+    }
+    fixture.messages[0].content = [
+      { type: 'text', text: 'Inspect the screenshot before approving.' },
+      image,
+      image,
+    ]
+    await prepare(fixture)
+    await expect(approval(fixture)).resolves.toBe('allowed-once')
+    const content = fixture.providerOptions[0].messages[0].content
+    expect(content.filter((block: any) => block.type === 'image')).toHaveLength(1)
+    expect(content[0].text).toContain('[image 1 attached for reviewer inspection]')
+    expect(audits(fixture)[0].images).toEqual({
+      admitted: 1,
+      omitted: 0,
+      admittedBytes: 1024,
+      estimatedTokens: 255,
+      everAdmitted: 1,
+      everAdmittedBytes: 1024,
+      everEstimatedTokens: 255,
+      imageBearingAttempts: 1,
+      fallbackUsed: false,
+    })
+  })
+
+  it.each([
+    ['visual consent is absent', ['text', 'image'] as Array<'text' | 'image'>, {}, undefined],
+    ['model capability is unknown', null, { imageMode: 'allow' }, undefined],
+    [
+      'the prepared context capacity is unknown',
+      ['text', 'image'] as Array<'text' | 'image'>,
+      { imageMode: 'allow' },
+      null,
+    ],
+    [
+      'the prepared context has no image capacity',
+      ['text', 'image'] as Array<'text' | 'image'>,
+      { imageMode: 'allow' },
+      128,
+    ],
+  ])(
+    'omits images and fails closed when %s',
+    async (_name, inputModalities, config, contextWindow) => {
+      const fixture = installFixture({ inputModalities, config, contextWindow })
+      fixture.messages[0].content = [
+        { type: 'text', text: 'Inspect the screenshot before approving.' },
+        {
+          type: 'image',
+          attachment: {
+            attachmentId: 'image-1',
+            mediaType: 'image/png',
+            bytes: 1024,
+            width: 512,
+            height: 512,
+          },
+        },
+      ]
+      await prepare(fixture)
+      await expect(approval(fixture)).resolves.toBe('rejected')
+      const content = fixture.providerOptions[0].messages[0].content
+      expect(content.some((block: any) => block.type === 'image')).toBe(false)
+      expect(content[0].text).toContain('[image omitted — reviewer cannot verify visual content]')
+      expect(audits(fixture)[0]).toMatchObject({
+        policyBlock: { visualOmission: true },
+        images: { admitted: 0, omitted: 1, everAdmitted: 0 },
+      })
+    },
+  )
+
+  it('uses an explicit omission warning for a text-only reviewer route', async () => {
+    const fixture = installFixture({
+      inputModalities: ['text'],
+      config: { imageMode: 'allow' },
+    })
+    fixture.messages[0].content = [
+      { type: 'text', text: 'Inspect the screenshot before approving.' },
+      {
+        type: 'image',
+        attachment: {
+          attachmentId: 'image-1',
+          mediaType: 'image/png',
+          bytes: 1024,
+          width: 512,
+          height: 512,
+        },
+      },
+    ]
+    await prepare(fixture)
+    await expect(approval(fixture)).resolves.toBe('rejected')
+    const content = fixture.providerOptions[0].messages[0].content
+    expect(content.filter((block: any) => block.type === 'image')).toHaveLength(0)
+    expect(content[0].text).toContain('[image omitted — reviewer cannot verify visual content]')
+    expect(audits(fixture)[0].images).toEqual({
+      admitted: 0,
+      omitted: 1,
+      admittedBytes: 0,
+      estimatedTokens: 0,
+      everAdmitted: 0,
+      everAdmittedBytes: 0,
+      everEstimatedTokens: 0,
+      imageBearingAttempts: 0,
+      fallbackUsed: false,
+    })
+    expect(audits(fixture)[0].policyBlock).toEqual({ visualOmission: true })
+  })
+
+  it('fails closed when transcript selection omits an image-bearing entry', async () => {
+    const fixture = installFixture({
+      inputModalities: ['text', 'image'],
+      config: { imageMode: 'allow', maxRecentEntries: 1 },
+    })
+    fixture.messages.push(
+      {
+        id: 'older-visual',
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Older visual evidence.' },
+          {
+            type: 'image',
+            attachment: {
+              attachmentId: 'omitted-image',
+              mediaType: 'image/png',
+              bytes: 1024,
+              width: 512,
+              height: 512,
+            },
+          },
+        ],
+        source: { kind: 'model', provider: 'test-provider', model: 'test-model' },
+      },
+      {
+        id: 'recent-assistant',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Most recent visible evidence.' }],
+        source: { kind: 'model', provider: 'test-provider', model: 'test-model' },
+      },
+    )
+    await prepare(fixture)
+    await expect(approval(fixture)).resolves.toBe('rejected')
+    expect(fixture.providerOptions[0].messages[0].content).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'image' })]),
+    )
+    expect(audits(fixture)[0]).toMatchObject({
+      policyBlock: { visualOmission: true },
+      images: { admitted: 0, omitted: 1, everAdmitted: 0 },
+    })
+  })
+
+  it('drops visual context with a warning after an image-bearing attempt fails', async () => {
+    const fixture = installFixture({
+      inputModalities: ['text', 'image'],
+      config: { imageMode: 'allow' },
+      steps: [{ kind: 'throw' }, { kind: 'success' }],
+    })
+    fixture.messages[0].content = [
+      { type: 'text', text: 'Inspect the screenshot before approving.' },
+      {
+        type: 'image',
+        attachment: {
+          attachmentId: 'image-1',
+          mediaType: 'image/png',
+          bytes: 1024,
+          width: 512,
+          height: 512,
+        },
+      },
+    ]
+    await prepare(fixture)
+    await expect(approval(fixture)).resolves.toBe('rejected')
+    expect(fixture.providerOptions[0].messages[0].content).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'image' })]),
+    )
+    expect(fixture.providerOptions[1].messages[0].content).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'image' })]),
+    )
+    expect(fixture.providerOptions[1].messages[0].content[0].text).toContain(
+      '[image omitted — reviewer cannot verify visual content]',
+    )
+    expect(audits(fixture)[0]).toMatchObject({
+      attempts: 2,
+      approvalOutcome: 'rejected',
+      policyBlock: { visualFallback: true },
+      images: {
+        admitted: 0,
+        omitted: 1,
+        admittedBytes: 0,
+        estimatedTokens: 0,
+        everAdmitted: 1,
+        everAdmittedBytes: 1024,
+        everEstimatedTokens: 255,
+        imageBearingAttempts: 1,
+        fallbackUsed: true,
+      },
+    })
+  })
+
+  it('retains disclosure facts when one image-bearing attempt fails without fallback', async () => {
+    const fixture = installFixture({
+      inputModalities: ['text', 'image'],
+      config: { imageMode: 'allow', maxAttempts: 1 },
+      steps: [{ kind: 'throw' }],
+    })
+    fixture.messages[0].content.push({
+      type: 'image',
+      attachment: {
+        attachmentId: 'image-1',
+        mediaType: 'image/png',
+        bytes: 1024,
+        width: 512,
+        height: 512,
+      },
+    })
+    await prepare(fixture)
+    await expect(approval(fixture)).resolves.toBe('unavailable')
+    expect(audits(fixture)[0]).toMatchObject({
+      attempts: 1,
+      approvalOutcome: 'unavailable',
+      images: {
+        admitted: 1,
+        omitted: 0,
+        admittedBytes: 1024,
+        everAdmitted: 1,
+        everAdmittedBytes: 1024,
+        everEstimatedTokens: 255,
+        imageBearingAttempts: 1,
+        fallbackUsed: false,
+      },
+    })
   })
 
   it('allows an explicitly authorized high-risk reversible action under the default policy', async () => {
@@ -369,7 +722,21 @@ describe('runtime security contracts', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    const fixture = installFixture({ steps: [{ kind: 'wait', gate }] })
+    const fixture = installFixture({
+      steps: [{ kind: 'wait', gate }],
+      inputModalities: ['text', 'image'],
+      config: { imageMode: 'allow' },
+    })
+    fixture.messages[0].content.push({
+      type: 'image',
+      attachment: {
+        attachmentId: 'cancelled-image',
+        mediaType: 'image/png',
+        bytes: 1024,
+        width: 512,
+        height: 512,
+      },
+    })
     const controller = new AbortController()
     await prepare(fixture)
     const pending = approval(fixture, makeRequest(fixture.agent, 'call-1', controller.signal))
@@ -384,6 +751,15 @@ describe('runtime security contracts', () => {
       outcome: 'deny',
       approvalOutcome: 'cancelled',
       rationale: 'Reviewer request was cancelled.',
+      images: {
+        admitted: 1,
+        admittedBytes: 1024,
+        everAdmitted: 1,
+        everAdmittedBytes: 1024,
+        everEstimatedTokens: 255,
+        imageBearingAttempts: 1,
+        fallbackUsed: false,
+      },
     })
   })
 
@@ -472,6 +848,9 @@ describe('configuration numeric boundaries', () => {
     'maxToolTokens',
     'maxEntryTokens',
     'maxRecentEntries',
+    'maxImageTokens',
+    'maxImages',
+    'maxImageBytes',
     'maxAttempts',
     'maxConsecutiveDenials',
     'maxConsecutiveFailures',

@@ -24,6 +24,7 @@ export interface ReviewerCatalogModel {
   id: string
   name: string
   description?: string
+  inputModalities?: Array<'text' | 'image'>
   reasoning?: {
     efforts: Array<{ id: string; name: string; description?: string }>
     defaultEffort?: string
@@ -99,6 +100,7 @@ function withCodexAutoReview(groups: ReviewerCatalogGroup[]): ReviewerCatalogGro
           id: CODEX_AUTO_REVIEW_MODEL,
           name: 'Codex Auto Review',
           description: 'OpenAI Codex approval-review route, requested through DSH.',
+          inputModalities: ['text', 'image'],
           reasoning: {
             efforts: [
               { id: 'low', name: 'Low' },
@@ -131,6 +133,7 @@ function routeOf(value: unknown): ReviewerRoute {
     ...(typeof route.reasoningEffort === 'string'
       ? { reasoningEffort: route.reasoningEffort }
       : {}),
+    imageMode: route.imageMode === 'allow' ? 'allow' : 'omit',
   }
 }
 
@@ -168,7 +171,7 @@ export async function saveReviewerModelSelection(
       { op: 'set', path: ['provider'], value: selection.provider },
       { op: 'set', path: ['model'], value: selection.model },
       ...(selection.reasoningEffort === undefined
-        ? [{ op: 'unset' as const, path: ['reasoningEffort'] }]
+        ? [{ op: 'set' as const, path: ['reasoningEffort'], value: null }]
         : [
             {
               op: 'set' as const,
@@ -176,6 +179,7 @@ export async function saveReviewerModelSelection(
               value: selection.reasoningEffort,
             },
           ]),
+      { op: 'set', path: ['imageMode'], value: selection.imageMode ?? 'omit' },
     ],
   })
   const section = valueOf(response)
@@ -242,6 +246,10 @@ const modelButtonStyle: CSSProperties = {
   textAlign: 'left',
   font: 'inherit',
   cursor: 'pointer',
+}
+
+export function reviewerModelAcceptsImages(model: ReviewerCatalogModel): boolean {
+  return model.inputModalities?.includes('image') === true
 }
 
 function modelOf(
@@ -358,8 +366,8 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
           'p',
           { style: { margin: '5px 0 0', fontSize: 13, lineHeight: 1.55, opacity: 0.62 } },
           zh
-            ? '为工具权限申请选择独立的审批模型。这里只使用 DSH 已配置的模型和凭据。'
-            : 'Choose an independent reviewer for tool permission requests. Only DSH models and credentials are used.',
+            ? '为工具权限申请选择独立的审批模型。选择带“视觉”标记的模型会允许把预算内图片发送给该 Reviewer provider。'
+            : 'Choose an independent reviewer for tool permission requests. Selecting a Vision model allows budgeted images to be sent to that reviewer provider.',
         ),
       ),
     ),
@@ -395,6 +403,17 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
                 'div',
                 { style: { marginTop: 4, fontSize: 14, fontWeight: 600 } },
                 currentName,
+              ),
+              createElement(
+                'div',
+                { style: { marginTop: 3, fontSize: 11, opacity: 0.55 } },
+                state.selection.imageMode === 'allow'
+                  ? zh
+                    ? '图片发送已启用'
+                    : 'Image sharing enabled'
+                  : zh
+                    ? '图片发送关闭'
+                    : 'Image sharing off',
               ),
             ),
             createElement(
@@ -463,6 +482,7 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
                             ...(model.reasoning?.defaultEffort === undefined
                               ? {}
                               : { reasoningEffort: model.reasoning.defaultEffort }),
+                            imageMode: reviewerModelAcceptsImages(model) ? 'allow' : 'omit',
                           }),
                       },
                       selectedMark(active),
@@ -473,12 +493,34 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
                           'span',
                           {
                             style: {
-                              display: 'block',
+                              display: 'flex',
+                              alignItems: 'center',
+                              flexWrap: 'wrap',
+                              gap: 6,
                               fontSize: 13,
                               fontWeight: active ? 600 : 450,
                             },
                           },
                           model.name,
+                          ...(reviewerModelAcceptsImages(model)
+                            ? [
+                                createElement(
+                                  'span',
+                                  {
+                                    key: 'vision',
+                                    style: {
+                                      padding: '1px 5px',
+                                      borderRadius: 5,
+                                      fontSize: 10,
+                                      fontWeight: 600,
+                                      color: '#2563eb',
+                                      background: 'color-mix(in srgb, #2563eb 12%, transparent)',
+                                    },
+                                  },
+                                  zh ? '视觉' : 'Vision',
+                                ),
+                              ]
+                            : []),
                         ),
                         ...(model.description
                           ? [
@@ -550,6 +592,7 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
                               provider: state.selection.provider,
                               model: state.selection.model,
                               ...(effort.id ? { reasoningEffort: effort.id } : {}),
+                              imageMode: state.selection.imageMode ?? 'omit',
                             }),
                           style: {
                             padding: '7px 12px',

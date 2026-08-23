@@ -69,10 +69,12 @@ describe('reviewer model selector data flow', () => {
       'gpt-5.2',
     ])
     expect(state.groups[1]?.models[0]?.reasoning?.defaultEffort).toBe('low')
+    expect(state.groups[1]?.models[0]?.inputModalities).toEqual(['text', 'image'])
     expect(state.selection).toEqual({
       provider: 'openai',
       model: 'gpt-5.2',
       reasoningEffort: 'medium',
+      imageMode: 'omit',
     })
     expect(state.revision).toBe(4)
     expect(selectionKey(state.selection)).toBe('["openai","gpt-5.2"]')
@@ -118,7 +120,7 @@ describe('reviewer model selector data flow', () => {
     )
   })
 
-  it('updates only route fields and unsets stale reasoning through DSH settings', async () => {
+  it('updates only route fields and masks stale base reasoning through DSH settings', async () => {
     const requests: unknown[] = []
     const api = {
       llm: { models: async () => ok({ groups: [], failures: [] }) },
@@ -143,7 +145,8 @@ describe('reviewer model selector data flow', () => {
         ops: [
           { op: 'set', path: ['provider'], value: 'local' },
           { op: 'set', path: ['model'], value: 'reviewer' },
-          { op: 'unset', path: ['reasoningEffort'] },
+          { op: 'set', path: ['reasoningEffort'], value: null },
+          { op: 'set', path: ['imageMode'], value: 'omit' },
         ],
       },
     ])

@@ -78,9 +78,12 @@ try {
   const installedBundlePatch = readFileSync(join(installed, bundlePatch), 'utf8')
   for (const [name, pattern] of [
     ['bounded reviewer context', /contextMode:\s*bounded/],
-    ['medium risk threshold', /maxRisk:\s*medium/],
+    ['high risk threshold', /maxRisk:\s*high/],
     ['high authorization threshold', /minAuthorization:\s*high/],
     ['disabled reasoning effort', /reasoningEffort:\s*['"]?off['"]?/],
+    ['default image omission', /imageMode:\s*omit/],
+    ['bounded image count', /maxImages:\s*8/],
+    ['bounded image bytes', /maxImageBytes:\s*16777216/],
   ]) {
     if (!pattern.test(installedBundlePatch)) {
       throw new Error(`installed DSH bundle patch is missing ${name}`)

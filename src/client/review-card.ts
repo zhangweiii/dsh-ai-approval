@@ -59,6 +59,8 @@ function copy(zh: boolean) {
         authorization: '授权',
         attempts: '尝试',
         duration: '耗时',
+        images: '图片',
+        everAdmitted: '曾获准',
       }
     : {
         reviewing: 'AI approval in progress',
@@ -78,6 +80,8 @@ function copy(zh: boolean) {
         authorization: 'authorization',
         attempts: 'attempts',
         duration: 'duration',
+        images: 'images',
+        everAdmitted: 'ever admitted',
       }
 }
 
@@ -137,10 +141,14 @@ export function AiApprovalReviewCard({
     data.risk === undefined || data.authorization === undefined
       ? undefined
       : `${text.risk}: ${data.risk} · ${text.authorization}: ${data.authorization}`
+  const imageMetrics =
+    data.images === undefined || data.images.admitted + data.images.omitted === 0
+      ? ''
+      : ` · ${data.images.admitted}/${data.images.admitted + data.images.omitted} ${text.images} · ${data.images.everAdmitted} ${text.everAdmitted}`
   const metrics =
     data.attempts === undefined || data.durationMs === undefined
       ? undefined
-      : `${data.attempts} ${text.attempts} · ${data.durationMs} ms ${text.duration}`
+      : `${data.attempts} ${text.attempts} · ${data.durationMs} ms ${text.duration}${imageMetrics}`
   const policyReasons = [
     ...(data.policyBlock?.maxRisk === undefined
       ? []
@@ -156,6 +164,20 @@ export function AiApprovalReviewCard({
             ? `授权 ${data.authorization} 低于配置要求 ${data.policyBlock.minAuthorization}。`
             : `Authorization ${data.authorization} is below the configured minimum ${data.policyBlock.minAuthorization}.`,
         ]),
+    ...(data.policyBlock?.visualOmission
+      ? [
+          zh
+            ? '存在未验证的视觉证据，不能自动批准。'
+            : 'Unverified visual evidence prevents automatic approval.',
+        ]
+      : []),
+    ...(data.policyBlock?.visualFallback
+      ? [
+          zh
+            ? '携图审批失败后的纯文本回退不能自动批准。'
+            : 'A text-only fallback after a failed image review cannot auto-approve.',
+        ]
+      : []),
   ]
   const title =
     data.status === 'rejected' && data.outcome === 'allow' ? text.policyRejected : text[data.status]
@@ -184,7 +206,7 @@ export function AiApprovalReviewCard({
       ...(metrics
         ? row(
             text.route,
-            `${data.provider}/${data.model}${data.reasoningEffort ? ` · ${data.reasoningEffort}` : ''} · ${metrics}`,
+            `${data.provider}/${data.model}${data.reasoningEffort ? ` · ${data.reasoningEffort}` : ''}${data.imageMode === 'allow' ? ' · Vision' : ''} · ${metrics}`,
           )
         : []),
     ),

@@ -8,6 +8,7 @@
         provider: deepseek-official
         model: deepseek-v4-flash
         reasoningEffort: 'off'
+        imageMode: omit
         contextMode: bounded
         maxRisk: high
         minAuthorization: high
@@ -15,6 +16,9 @@
         sendSessionId: false
         timeoutMs: 60000
         maxAttempts: 2
+        maxImageTokens: 10000
+        maxImages: 8
+        maxImageBytes: 16777216
 
 - id: permission
   config:

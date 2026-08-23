@@ -28,6 +28,8 @@ const AUTH: Record<ReviewerAuthorization, number> = {
 export interface AutoApprovalPolicyBlock {
   maxRisk?: MaxReviewerRisk
   minAuthorization?: MinReviewerAuthorization
+  visualOmission?: true
+  visualFallback?: true
 }
 
 /** Explain which local limits block a reviewer allow decision. */

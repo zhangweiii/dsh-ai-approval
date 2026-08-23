@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
@@ -13,6 +13,20 @@ type ReviewerRoute = {
   model: string
   reasoningEffort?: string
 }
+
+let standardOutput: string[]
+
+beforeEach(() => {
+  standardOutput = []
+  vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any) => {
+    standardOutput.push(String(chunk))
+    return true
+  })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 function installFixture(settingsRoute?: ReviewerRoute) {
   const handlers = new Map<string, Handler>()
@@ -57,8 +71,13 @@ function installFixture(settingsRoute?: ReviewerRoute) {
     yield { type: 'usage', usage: { inputTokens: 12, outputTokens: 7 } }
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
+  const prepareCall = async (config: Record<string, unknown>) => ({
+    config,
+    inputModalities: ['text'],
+    stream,
+  })
   const scope: any = {
-    llm: { stream },
+    llm: { prepareCall, stream },
     permissionPresets: { current: () => 'ai-approval' },
     systemPrompt: { context: () => undefined },
     on: (event: string, handler: Handler) => {
@@ -110,11 +129,32 @@ describe('approval reviewer runtime', () => {
     const approvalRequest = fixture.handlers.get('approval/request')
     expect(preExecute).toBeDefined()
     expect(approvalRequest).toBeDefined()
+    expect(fixture.handlers.get('tools/post-execute')).toBeUndefined()
 
     await preExecute!(fixture.execution, async () => 'ask')
     await expect(approvalRequest!(fixture.request, async () => 'rejected')).resolves.toBe(
       'allowed-once',
     )
+    expect(fixture.appended).toHaveLength(2)
+    expect(fixture.appended[0]).toMatchObject({
+      type: 'command/run',
+      data: {
+        commandId: expect.stringMatching(/^ai-approval-/),
+        name: 'ai-approval',
+        source: { kind: 'plugin', plugin: 'ai-approval-reviewer' },
+      },
+    })
+    expect(fixture.appended[1]).toMatchObject({
+      type: 'command/done',
+      data: {
+        commandId: (fixture.appended[0]!.data as { commandId: string }).commandId,
+        kind: 'success',
+        text: expect.stringMatching(
+          /AI 审批：通过（仅本次）｜危险级别：low｜授权判断：high[\s\S]*原因：The user requested this read-only check\./,
+        ),
+      },
+    })
+    expect(standardOutput).toEqual([])
 
     const options = fixture.providerOptions[0] as {
       sessionId?: string
@@ -131,7 +171,6 @@ describe('approval reviewer runtime', () => {
       'ai-approval/review-started',
       'ai-approval/reviewed',
     ])
-    expect(fixture.appended).toEqual([])
     expect(started?.data).toMatchObject({
       toolName: 'shell',
       reason: 'The command needs a wider capability.',

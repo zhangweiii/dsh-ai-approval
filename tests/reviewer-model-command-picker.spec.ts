@@ -35,6 +35,7 @@ describe('/ai-approval-models Web picker', () => {
                   {
                     id: 'gpt-5.2',
                     name: 'GPT-5.2',
+                    inputModalities: ['text', 'image'],
                     reasoning: {
                       efforts: [
                         { id: 'low', name: 'Low' },
@@ -95,6 +96,8 @@ describe('/ai-approval-models Web picker', () => {
     ])
     expect(options[0]).toMatchObject({ active: true })
     expect(options[2]?.detail).toContain('openai/gpt-5.2')
+    expect(options[1]?.detail).toContain('Vision')
+    expect(options[2]?.detail).toContain('Vision')
 
     await decoration!.ui.onSelect(options[2]!, { sessionId: 'session-1' as never })
     expect(mutate).toHaveBeenCalledWith({
@@ -104,6 +107,7 @@ describe('/ai-approval-models Web picker', () => {
         { op: 'set', path: ['provider'], value: 'openai' },
         { op: 'set', path: ['model'], value: 'gpt-5.2' },
         { op: 'set', path: ['reasoningEffort'], value: 'medium' },
+        { op: 'set', path: ['imageMode'], value: 'allow' },
       ],
     })
   })

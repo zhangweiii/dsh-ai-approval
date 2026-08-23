@@ -21,6 +21,7 @@ export interface AiApprovalReviewCardData extends AiApprovalReviewStartedData {
   rationale?: string
   attempts?: number
   durationMs?: number
+  images?: AiApprovalReviewedData['images']
 }
 
 declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
@@ -64,6 +65,7 @@ export const aiApprovalReviewDefinition: ConversationNodeDefinition<AiApprovalRe
       provider: data.provider,
       model: data.model,
       ...(data.reasoningEffort === undefined ? {} : { reasoningEffort: data.reasoningEffort }),
+      ...(data.imageMode === undefined ? {} : { imageMode: data.imageMode }),
       cwd: data.cwd,
       risk: data.risk,
       authorization: data.authorization,
@@ -73,6 +75,7 @@ export const aiApprovalReviewDefinition: ConversationNodeDefinition<AiApprovalRe
       rationale: data.rationale,
       attempts: data.attempts,
       durationMs: data.durationMs,
+      ...(data.images === undefined ? {} : { images: data.images }),
     }
   },
   publication: () => 'immediate',

@@ -10,7 +10,16 @@ export * from './config.js'
 export * from './types.js'
 export { REVIEWER_SETTINGS_NAMESPACE } from './reviewer-route-settings.js'
 export { redactSensitiveText } from './privacy.js'
-export { buildReviewPrompt } from './review-context.js'
+export {
+  buildReviewContext,
+  buildReviewPrompt,
+  estimateReviewImageTokens,
+  GUARDIAN_MAX_IMAGE_ITEM_TOKENS,
+  REVIEW_IMAGE_OMITTED_TEXT,
+  type ReviewContext,
+  type ReviewImageAudit,
+  type ReviewImageStats,
+} from './review-context.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

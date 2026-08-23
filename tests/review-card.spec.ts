@@ -43,11 +43,23 @@ describe('AI approval review card', () => {
       attempts: 1,
       durationMs: 125,
       reasoningEffort: 'low',
+      images: {
+        admitted: 1,
+        omitted: 1,
+        admittedBytes: 1024,
+        estimatedTokens: 255,
+        everAdmitted: 1,
+        everAdmittedBytes: 1024,
+        everEstimatedTokens: 255,
+        imageBearingAttempts: 1,
+        fallbackUsed: false,
+      },
     })
     expect(output).toContain(title)
     expect(output).toContain('The reviewer explains the decision.')
     expect(output).toContain('risk: low')
     expect(output).toContain('local/reviewer')
+    expect(output).toContain('1/2 images')
     expect(output).toContain('low')
   })
 
