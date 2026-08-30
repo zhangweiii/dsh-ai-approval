@@ -145,7 +145,7 @@
     "@deepseek-ai/dsh-timeout": "0.1.1-rc.2",
     "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
     "@deepseek-ai/dsh-user-approval": "0.1.1-rc.2",
-    "@types/node": "22.20.0",
+    "@types/node": "26.4.0",
     "@types/react": "18.3.28",
     "@vitest/coverage-v8": "4.1.8",
     "prettier": "3.6.2",
