@@ -1,11 +1,11 @@
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {
-  ChatConversationViewNode,
-  ClientContext,
   ConversationLocation,
   ConversationMatch,
   ConversationNodeContext,
   ConversationNodeDefinition,
-} from '@deepseek-ai/dsh-client-runtime/client'
+} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { AiApprovalReviewStartedData, AiApprovalReviewedData } from '../types.js'
 import type {} from '../types.js'
@@ -24,7 +24,7 @@ export interface AiApprovalReviewCardData extends AiApprovalReviewStartedData {
   images?: AiApprovalReviewedData['images']
 }
 
-declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+declare module '@deepseek-ai/dsh-client-ui-chat/client' {
   interface ChatNodeDataMap {
     'ai-approval-review': AiApprovalReviewCardData
   }
@@ -95,13 +95,16 @@ export const aiApprovalReviewDefinition: ConversationNodeDefinition<AiApprovalRe
 }
 
 export function installAiApprovalConversationNode(ctx: ClientContext): void {
-  ctx.conversationEvents.register(aiApprovalReviewDefinition)
+  ctx.uiConversation.events.register(aiApprovalReviewDefinition)
   ctx.slots.inject('conversation.chat.node', () =>
     ctx.slots.register(
       {
         name: 'conversation.chat.node',
         key: 'ai-approval-review',
-        locale: 'conversation',
+        // The keyed Chat slot's copy lives in the Chat package's own `chat`
+        // dictionary, so the framework-synthesized `t` seat must bind that
+        // namespace rather than the Conversation shell's.
+        locale: 'chat',
       },
       AiApprovalReviewCard,
     ),

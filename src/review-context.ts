@@ -10,6 +10,14 @@ type ImageBlock = Extract<ContentBlock, { type: 'image' }>
 interface Entry {
   kind: Kind
   content: readonly ContentBlock[]
+  /**
+   * Tool-role messages answer one call. DSH 0.1.7 removed the nested
+   * `tool-result` content block, so the call identity and error flag now live on
+   * the message; the projection carries them alongside the blocks so the
+   * rendered transcript keeps the same reviewer-facing shape.
+   */
+  toolCallId?: string
+  isError?: boolean
 }
 
 interface SelectedEntry {
@@ -71,20 +79,9 @@ function imageMarker(block: ImageBlock, visuals: VisualProjection): string {
     : `[image ${ordinal} attached for reviewer inspection]`
 }
 
-function safeNestedContent(
-  content: readonly ContentBlock[],
-  visuals: VisualProjection,
-): readonly unknown[] {
-  return content.map((block) => {
-    if (block.type === 'image') return imageMarker(block, visuals)
-    if (block.type === 'tool-result')
-      return { ...block, content: safeNestedContent(block.content, visuals) }
-    return block
-  })
-}
-
-function contentText(content: readonly ContentBlock[], visuals: VisualProjection): string {
-  return content
+/** Render one entry's blocks, attributing a tool-role entry to its call. */
+function contentText(entry: Entry, visuals: VisualProjection): string {
+  const body = entry.content
     .map((block) => {
       switch (block.type) {
         case 'text':
@@ -93,10 +90,6 @@ function contentText(content: readonly ContentBlock[], visuals: VisualProjection
           return '[reasoning omitted]'
         case 'tool-call':
           return `tool call ${block.name}: ${block.arguments}`
-        case 'tool-result':
-          return `tool result ${String(block.toolCallId)}: ${jsonText(
-            safeNestedContent(block.content, visuals),
-          )}`
         case 'image':
           return imageMarker(block, visuals)
         default:
@@ -104,17 +97,21 @@ function contentText(content: readonly ContentBlock[], visuals: VisualProjection
       }
     })
     .join('\n')
+  if (entry.kind !== 'tool' || entry.toolCallId === undefined) return body
+  const outcome = entry.isError === true ? ' (error)' : ''
+  return `tool result${outcome} ${entry.toolCallId}: ${jsonText(entry.content.map((block) => safeBlock(block, visuals)))}`
+}
+
+/** Replace an image block with its reviewer-facing marker inside raw JSON output. */
+function safeBlock(block: ContentBlock, visuals: VisualProjection): unknown {
+  return block.type === 'image' ? imageMarker(block, visuals) : block
 }
 
 function kind(message: Message): Kind | undefined {
+  if (message.role === 'tool') return 'tool'
   if (message.role === 'assistant')
     return message.content.some((block) => block.type === 'tool-call') ? 'tool' : 'assistant'
-  if (message.role === 'user')
-    return message.content.some((block) => block.type === 'tool-result')
-      ? 'tool'
-      : message.source.kind === 'user'
-        ? 'user'
-        : 'context'
+  if (message.role === 'user') return message.source.kind === 'user' ? 'user' : 'context'
   return undefined
 }
 
@@ -122,7 +119,15 @@ function entries(messages: readonly Message[]): Entry[] {
   return messages.flatMap((message) => {
     const entryKind = kind(message)
     if (!entryKind) return []
-    return [{ kind: entryKind, content: message.content }]
+    return [
+      {
+        kind: entryKind,
+        content: message.content,
+        ...(message.role === 'tool'
+          ? { toolCallId: String(message.toolCallId), isError: message.isError }
+          : {}),
+      },
+    ]
   })
 }
 
@@ -147,7 +152,7 @@ function select(
     entry,
     index,
     text: `[${index + 1}] ${entry.kind}: ${truncateEntry(
-      contentText(entry.content, noVisuals),
+      contentText(entry, noVisuals),
       config.maxEntryTokens,
     )}`,
   }))
@@ -228,7 +233,7 @@ function collectImages(content: readonly ContentBlock[], survey: ImageSurvey): v
       }
       survey.candidates.delete(key)
       survey.candidates.set(key, block)
-    } else if (block.type === 'tool-result') collectImages(block.content, survey)
+    }
   }
 }
 
@@ -312,10 +317,7 @@ function projectVisuals(
 }
 
 function collectImageKeys(content: readonly ContentBlock[], keys: Set<string>): void {
-  for (const block of content) {
-    if (block.type === 'image') keys.add(imageKey(block))
-    else if (block.type === 'tool-result') collectImageKeys(block.content, keys)
-  }
+  for (const block of content) if (block.type === 'image') keys.add(imageKey(block))
 }
 
 function visualIndex(selected: readonly SelectedEntry[], visuals: VisualProjection): string {
@@ -410,7 +412,7 @@ export function buildReviewContext(
     .map(
       ({ entry, index }) =>
         `[${index + 1}] ${entry.kind}: ${truncateEntry(
-          contentText(entry.content, visuals),
+          contentText(entry, visuals),
           config.maxEntryTokens,
         )}`,
     )

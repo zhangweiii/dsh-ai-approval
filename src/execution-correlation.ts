@@ -1,4 +1,4 @@
-import type { CallId } from '@deepseek-ai/dsh-llm'
+import type { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 
 const DEFAULT_CAPACITY = 128
@@ -13,7 +13,7 @@ export class PendingExecutionRegistry {
     }
   }
 
-  private key(sessionId: string | undefined, callId: CallId): string {
+  private key(sessionId: string | undefined, callId: ToolCallId): string {
     return JSON.stringify([sessionId ?? null, String(callId)])
   }
 
@@ -35,7 +35,7 @@ export class PendingExecutionRegistry {
 
   lookup(
     sessionId: string | undefined,
-    callId: CallId | undefined,
+    callId: ToolCallId | undefined,
   ): Readonly<ToolExecution> | undefined {
     if (sessionId === undefined || callId === undefined) return undefined
     return this.entries.get(this.key(sessionId, callId))

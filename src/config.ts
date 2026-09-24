@@ -1,5 +1,6 @@
 import z from '@deepseek-ai/schemastery'
-import { deepFreeze } from '@deepseek-ai/dsh-llm'
+import type { Volatile } from '@deepseek-ai/cordis'
+import { deepFreeze } from '@deepseek-ai/dsh-util-values'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 
 /** Risk level assigned to the proposed action. */
@@ -27,18 +28,33 @@ export interface ReviewerRoute {
 export interface ReviewerRouteSettings extends Omit<ReviewerRoute, 'reasoningEffort'> {
   reasoningEffort?: string | null
 }
-/** Plugin configuration. Provider and model select the independent reviewer. */
+/**
+ * One route field as a schema field declared `volatile()` resolves it: a live
+ * reference whose `get()` returns the current value. {@link liveValue} also
+ * accepts a bare value, so composition defaults and test fixtures that pass
+ * plain strings keep working.
+ */
+export type MaybeVolatile<T> = T | Volatile<T>
+
+/** Read one possibly-volatile configuration field at call time. */
+export function liveValue<T>(value: MaybeVolatile<T> | undefined): T | undefined {
+  if (value === undefined) return undefined
+  const ref = value as { get?: () => T }
+  return typeof ref.get === 'function' ? ref.get() : (value as T)
+}
+
+/** Plugin configuration as it reaches the runtime: route fields are live references. */
 export interface Config {
   /** Permission-preset name that activates this reviewer. */
   presetName?: string
   /** LLM provider route for the reviewer. */
-  provider: string
+  provider: Volatile<string>
   /** Model id on the reviewer route. */
-  model: string
+  model: Volatile<string>
   /** Optional adapter-owned reasoning effort for the reviewer route. */
-  reasoningEffort?: string
+  reasoningEffort: Volatile<string | undefined>
   /** Explicitly allow bounded transcript images on a capable reviewer route. */
-  imageMode?: ReviewerImageMode
+  imageMode: Volatile<ReviewerImageMode | undefined>
   /** End-to-end reviewer deadline in milliseconds. */
   timeoutMs?: number
   /** Maximum combined UTF-8 bytes for reviewer system and user text; images use separate limits. */
@@ -105,13 +121,26 @@ export interface ResolvedConfig {
   readonly maxConsecutiveFailures: number
   readonly failureCooldownMs: number
 }
-/** Runtime schema exposed to Cordis configuration catalogs. */
-export const Config: z<Config> = z.object({
+/**
+ * Runtime schema exposed to Cordis configuration catalogs.
+ *
+ * The annotation is deliberately omitted so the schema infers its own output
+ * shape: DSH 0.1.7 rewrites `volatile()` fields into live references before
+ * `apply` runs, so a hand-written annotation describing the parsed shape would
+ * disagree with the composition-time input type the loader checks.
+ */
+export const Config = z.object({
   presetName: z.string().default('ai-approval'),
-  provider: z.string().required(),
-  model: z.string().required(),
-  reasoningEffort: z.string(),
-  imageMode: z.union(['omit', 'allow'] as const).default('omit'),
+  // The reviewer route lives in the live-form projection: DSH 0.1.7 renders and
+  // edits `volatile()` fields through its own settings/config-editor surface, so
+  // these four stay live references rather than frozen composition values.
+  provider: z.string().required().volatile(),
+  model: z.string().required().volatile(),
+  reasoningEffort: z.string().volatile(),
+  imageMode: z
+    .union(['omit', 'allow'] as const)
+    .default('omit')
+    .volatile(),
   timeoutMs: z.number().default(60000),
   maxInputBytes: z.number().default(48000),
   maxOutputTokens: z.number().default(512),
@@ -166,6 +195,26 @@ export function resolveReviewerRoute(route: ReviewerRouteSettings): Readonly<Rev
     imageMode: route.imageMode ?? 'omit',
   })
 }
+/**
+ * Snapshot the four live route fields out of a possibly-volatile Config.
+ *
+ * `provider` and `model` are schema-required, so a resolved Config always
+ * carries a string for them; the undefined branches exist only so an
+ * unconfigured or partially-built fixture still reaches
+ * {@link resolveReviewerRoute}, which is what reports the failure.
+ */
+export function readRouteFields(config: Config): ReviewerRouteSettings {
+  const provider = liveValue(config.provider)
+  const model = liveValue(config.model)
+  const reasoningEffort = liveValue(config.reasoningEffort)
+  const imageMode = liveValue(config.imageMode)
+  return {
+    ...(provider === undefined ? {} : { provider }),
+    ...(model === undefined ? {} : { model }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    ...(imageMode === undefined ? {} : { imageMode }),
+  } as ReviewerRouteSettings
+}
 /** Validate, default, and freeze untrusted plugin configuration. */
 export function resolveConfig(config: Config): ResolvedConfig {
   const c = config as unknown as Record<string, unknown>
@@ -197,12 +246,15 @@ export function resolveConfig(config: Config): ResolvedConfig {
   ]
   for (const k of Object.keys(c))
     if (!keys.includes(k)) throw new Error(`ai-approval: unknown config key "${k}"`)
+  const routeFields = readRouteFields(config)
   const r = {
     presetName: config.presetName ?? 'ai-approval',
-    provider: config.provider,
-    model: config.model,
-    ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
-    imageMode: config.imageMode ?? 'omit',
+    provider: routeFields.provider,
+    model: routeFields.model,
+    ...(routeFields.reasoningEffort === undefined || routeFields.reasoningEffort === null
+      ? {}
+      : { reasoningEffort: routeFields.reasoningEffort }),
+    imageMode: routeFields.imageMode ?? 'omit',
     timeoutMs: config.timeoutMs ?? 60000,
     maxInputBytes: config.maxInputBytes ?? 48000,
     maxOutputTokens: config.maxOutputTokens ?? 512,

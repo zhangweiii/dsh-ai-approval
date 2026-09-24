@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { Context } from '@deepseek-ai/cordis'
 import type { ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import { defineTool, ToolRuntime, type ToolExecution } from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import apply, { resolveConfig } from '../src/index.ts'
+import { apply, resolveConfig } from '../src/index.ts'
 
 type Handler = (...args: any[]) => any
 type Step =
@@ -73,7 +73,7 @@ function makeRequest(
   return {
     agent,
     toolName: 'shell',
-    callId: CallId(call),
+    callId: ToolCallId(call),
     reason,
     ...(signal === undefined ? {} : { signal }),
   } as ApprovalRequest
@@ -82,7 +82,7 @@ function makeRequest(
 function makeExecution(agent: Agent, call = 'call-1', command = 'echo hello') {
   return {
     agent,
-    callId: CallId(call),
+    callId: ToolCallId(call),
     name: 'shell',
     arguments: { command },
   } as unknown as ToolExecution
@@ -329,7 +329,7 @@ describe('runtime security contracts', () => {
     })
 
     const result = await ctx.tools.execute({
-      callId: CallId('finalizing-call'),
+      callId: ToolCallId('finalizing-call'),
       name: 'finalizing_tool',
       arguments: {},
       signal: new AbortController().signal,
@@ -369,7 +369,11 @@ describe('runtime security contracts', () => {
     ]
     await prepare(fixture)
     await expect(approval(fixture)).resolves.toBe('allowed-once')
-    const content = fixture.providerOptions[0].messages[0].content
+    const request = fixture.providerOptions[0].messages[0]
+    // 0.1.7 removed the shared catch-all `plugin` message source, so the request
+    // must carry this package's own declared producer kind.
+    expect(request.source).toEqual({ kind: 'dsh-ai-approval' })
+    const content = request.content
     expect(content.filter((block: any) => block.type === 'image')).toHaveLength(1)
     expect(content[0].text).toContain('[image 1 attached for reviewer inspection]')
     expect(audits(fixture)[0].images).toEqual({

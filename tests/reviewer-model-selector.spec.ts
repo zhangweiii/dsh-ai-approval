@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import {
   CODEX_AUTO_REVIEW_MODEL,
   loadReviewerModelState,
@@ -7,15 +8,32 @@ import {
 } from '../src/client/reviewer-model-selector.ts'
 
 function ok<T>(value: T) {
-  return { result: { ok: true as const, value } }
+  return { ok: true as const, value }
+}
+
+function fail(message: string) {
+  return { ok: false as const, error: new RemoteError('gateway/internal', message, {}) }
+}
+
+function namespaceView(value: unknown, revision: number) {
+  return {
+    ns: 'dsh-ai-approval',
+    schema: {},
+    value,
+    applies: 'live' as const,
+    secrets: [],
+    revision,
+  }
 }
 
 describe('reviewer model selector data flow', () => {
   it('loads every registered DSH provider group and the persisted reviewer route', async () => {
     const api = {
-      llm: {
-        models: async () =>
+      session: {
+        modelCatalog: async () =>
           ok({
+            default: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+            routableProviders: ['deepseek-official', 'openai'],
             groups: [
               {
                 id: 'deepseek-official',
@@ -49,11 +67,7 @@ describe('reviewer model selector data flow', () => {
             writable: true,
             hasDocument: true,
             namespaces: [
-              {
-                ns: 'dsh-ai-approval',
-                value: { provider: 'openai', model: 'gpt-5.2', reasoningEffort: 'medium' },
-                revision: 4,
-              },
+              namespaceView({ provider: 'openai', model: 'gpt-5.2', reasoningEffort: 'medium' }, 4),
             ],
           }),
         mutate: async () => {
@@ -69,7 +83,6 @@ describe('reviewer model selector data flow', () => {
       'gpt-5.2',
     ])
     expect(state.groups[1]?.models[0]?.reasoning?.defaultEffort).toBe('low')
-    expect(state.groups[1]?.models[0]?.inputModalities).toEqual(['text', 'image'])
     expect(state.selection).toEqual({
       provider: 'openai',
       model: 'gpt-5.2',
@@ -82,9 +95,11 @@ describe('reviewer model selector data flow', () => {
 
   it('does not expose the Codex reviewer route without a DSH OpenAI provider group', async () => {
     const api = {
-      llm: {
-        models: async () =>
+      session: {
+        modelCatalog: async () =>
           ok({
+            default: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+            routableProviders: ['deepseek-official'],
             groups: [
               {
                 id: 'deepseek-official',
@@ -101,11 +116,7 @@ describe('reviewer model selector data flow', () => {
             writable: true,
             hasDocument: true,
             namespaces: [
-              {
-                ns: 'dsh-ai-approval',
-                value: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
-                revision: 1,
-              },
+              namespaceView({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }, 1),
             ],
           }),
         mutate: async () => {
@@ -123,49 +134,48 @@ describe('reviewer model selector data flow', () => {
   it('updates only route fields and masks stale base reasoning through DSH settings', async () => {
     const requests: unknown[] = []
     const api = {
-      llm: { models: async () => ok({ groups: [], failures: [] }) },
+      session: {
+        modelCatalog: async () =>
+          ok({
+            default: { provider: 'local', model: 'reviewer' },
+            routableProviders: [],
+            groups: [],
+            failures: [],
+          }),
+      },
       settings: {
         describe: async () => ok({ writable: true, hasDocument: true, namespaces: [] }),
-        mutate: async (request: unknown) => {
-          requests.push(request)
-          return ok({
-            ns: 'dsh-ai-approval',
-            value: { provider: 'local', model: 'reviewer' },
-            revision: 8,
-          })
+        mutate: async (...args: unknown[]) => {
+          requests.push(args)
+          return ok(namespaceView({ provider: 'local', model: 'reviewer' }, 8))
         },
       },
     }
 
     const saved = await saveReviewerModelSelection(api, { provider: 'local', model: 'reviewer' }, 7)
     expect(requests).toEqual([
-      {
-        ns: 'dsh-ai-approval',
-        expectedRevision: 7,
-        ops: [
+      [
+        'dsh-ai-approval',
+        [
           { op: 'set', path: ['provider'], value: 'local' },
           { op: 'set', path: ['model'], value: 'reviewer' },
           { op: 'set', path: ['reasoningEffort'], value: null },
           { op: 'set', path: ['imageMode'], value: 'omit' },
         ],
-      },
+        7,
+      ],
     ])
     expect(saved.revision).toBe(8)
   })
 
   it('surfaces DSH business errors without falling back to another provider', async () => {
     const api = {
-      llm: {
-        models: async () => ({
-          result: {
-            ok: false as const,
-            error: { message: 'model catalog unavailable' },
-          },
-        }),
+      session: {
+        modelCatalog: async () => fail('model catalog unavailable'),
       },
       settings: {
         describe: async () => ok({ writable: true, hasDocument: true, namespaces: [] }),
-        mutate: async () => ok({ value: {}, revision: 0 }),
+        mutate: async () => ok(namespaceView({}, 0)),
       },
     }
     await expect(loadReviewerModelState(api)).rejects.toThrow('model catalog unavailable')

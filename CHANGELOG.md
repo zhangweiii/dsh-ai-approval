@@ -2,6 +2,50 @@
 
 All notable changes are documented here. This project is pre-release; configuration and compatibility details may change between release candidates.
 
+## 0.1.2-rc.1
+
+- Restored compatibility with DSH `0.1.7-alpha.2`. The host made several breaking changes that this
+  plugin had to follow, and the old pins silently degraded rather than failing loudly:
+  - `ctx.settings.register()` (settings namespaces) no longer exists; `ctx.settings` is now a
+    configuration-form service over profile entries. The reviewer route moved onto the plugin's own
+    `Config` entry, whose four route fields are declared `volatile()` (the marker that makes them
+    live and editable), and writes go through `ctx.configEditor.edit()` against that entry. At
+    runtime the removed method previously threw `TypeError: s.register is not a function`, which
+    aborted the route binding and left reviewer settings unwritable.
+  - The shared `plugin` LLM message source was removed. Each producer now declares its own
+    `MessageSourceMap` kind, so the reviewer request carries `kind: 'dsh-ai-approval'`.
+  - The nested `tool-result` content block was removed. Tool output is now a first-class
+    `role: 'tool'` message carrying `toolCallId` and `isError`, so the bounded transcript
+    projection reads those fields from the message instead of from a nested block.
+  - The keyed `conversation.chat.node` slot now types its copy against the Chat package's `chat`
+    dictionary and requires the slot-level hooks face; registering with the Conversation shell
+    namespace no longer satisfied the slot contract.
+- Corrected the synthetic review summary's `command/run` producer record: it claimed
+  `source: { kind: 'plugin', plugin: 'dsh-ai-approval' }`, a shape DSH's `CommandSourceMap` has never
+  contained (in 0.1.5 or 0.1.7 — the shipped vocabulary lists only `user`). The old code cast the
+  call to hide the mismatch. DSH documents that map as merge-extensible, so this package now
+  declares its own `'dsh-ai-approval'` source kind and appends through the typed `Session.append`
+  with no cast. Rendering is unaffected: the chat client resolves command rows from `commandId` and
+  `name` and never reads `source`.
+- Fixed two defects that only surfaced against a live 0.1.7 runtime and would have left the plugin
+  looking installed but partly inert:
+  - The module's `export default apply` was shadowing the `Config` schema. DSH's Loader resolves a
+    plugin module to `exports.default ?? exports` and the settings form reads
+    `entry.fiber.runtime.Config`, so the default export silently removed the **AI approval** page
+    from Settings. The module now exports a named `apply` (the shape DSH's own function plugins
+    use), and a regression test pins the resolved module shape.
+  - `settings.configure()` was passed the fiber created inside the `inject` callback instead of the
+    plugin's owning fiber, so the page policy landed on the wrong instance and the auto-generated
+    form stayed enabled beside the custom reviewer page.
+- Aligned every `@deepseek-ai/*` peer and dev dependency with the host runtime
+  DSH `0.1.7-alpha.2` (and `@deepseek-ai/cordis` `4.0.4`), added `@deepseek-ai/dsh-config-editor`
+  and `@deepseek-ai/dsh-client-ui-settings` as dev-only types dependencies, and raised
+  `@deepseek-ai/schemastery` to `3.18.4` for the `volatile()` schema marker.
+- Regenerated the lockfile from scratch after the bump: the incremental update had left stale
+  `0.1.0-rc.7`/`0.1.5-rc.2` transitive resolutions in place, which made a public type re-export
+  (`assertNever`) resolve against an older `@deepseek-ai/dsh-llm` and broke the runtime contract
+  suite.
+
 ## 0.1.1-rc.2
 
 - Renamed the public package, plugin row, settings namespace, browser module, and audit source to `dsh-ai-approval` before the first public release.

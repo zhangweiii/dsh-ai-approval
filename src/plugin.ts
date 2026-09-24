@@ -36,10 +36,7 @@ export class AiApprovalPlugin {
     this.ctx.on(
       'approval/request',
       async (request: ApprovalRequest, next: () => Promise<ApprovalOutcome>) => {
-        if (
-          this.ctx.permissionPresets.current(request.agent.session.events) !==
-          this.config.presetName
-        )
+        if (this.ctx.permissionPresets.current(request.agent.session) !== this.config.presetName)
           return next()
         const execution = this.pending.lookup(request.agent.session.header.id, request.callId)
         return execution === undefined ? 'unavailable' : this.coordinator.review(request, execution)
@@ -51,7 +48,7 @@ export class AiApprovalPlugin {
         order: 116,
         text: ({ agent }) =>
           agent !== undefined &&
-          this.ctx.permissionPresets.current(agent.session.events) === this.config.presetName
+          this.ctx.permissionPresets.current(agent.session) === this.config.presetName
             ? AI_APPROVAL_SYSTEM_CONTEXT
             : '',
       })

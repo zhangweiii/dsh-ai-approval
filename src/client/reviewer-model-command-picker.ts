@@ -1,4 +1,4 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ReviewerRoute } from '../config.js'
 import {
   loadReviewerModelState,
@@ -39,7 +39,6 @@ interface CommandUiView {
 
 interface ReviewerModelCommandContext extends ClientContext {
   commandUi?: CommandUiView
-  connection?: { api: ReviewerModelApi }
 }
 
 function effortName(model: ReviewerCatalogModel, effort: string | undefined): string | undefined {
@@ -97,15 +96,15 @@ export function reviewerModelSelectOptions(
         provider: group.id,
         model: model.id,
         ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
-        imageMode: reviewerModelAcceptsImages(model) ? 'allow' : 'omit',
+        imageMode: state.selection.imageMode ?? 'omit',
       }
       const effort = effortName(model, reasoningEffort)
       return {
         id: optionId(selection, state.revision),
         label: model.name,
         detail: `${group.name} · ${group.id}/${model.id}${
-          reviewerModelAcceptsImages(model) ? ' · Vision · image sharing enabled' : ''
-        }${effort === undefined ? '' : ` · ${effort}`}`,
+          reviewerModelAcceptsImages(model) ? ' · Vision' : ''
+        }${effort === undefined ? '' : ` · ${effort}`}${active ? ` · images ${selection.imageMode}` : ''}`,
         ...(active ? { active: true } : {}),
       }
     }),
@@ -115,8 +114,8 @@ export function reviewerModelSelectOptions(
 /** Decorate the bare Web command with DSH's native popupSelect shell. */
 export function installReviewerModelCommandPicker(ctx: ClientContext): void {
   const scope = ctx as ReviewerModelCommandContext
-  if (scope.commandUi === undefined || scope.connection === undefined) return
-  const api = scope.connection.api
+  const api = ctx.remote as ReviewerModelApi | undefined
+  if (scope.commandUi === undefined || api === undefined) return
   const decoration: ReviewerCommandDecoration = {
     name: 'ai-approval-models',
     available: () => true,

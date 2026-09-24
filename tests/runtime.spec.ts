@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
-import apply from '../src/index.ts'
+import { apply } from '../src/index.ts'
 
 type Handler = (...args: any[]) => any
 
@@ -51,14 +51,14 @@ function installFixture(settingsRoute?: ReviewerRoute) {
   const agent = { session } as unknown as Agent
   const execution = {
     agent,
-    callId: CallId('call-1'),
+    callId: ToolCallId('call-1'),
     name: 'shell',
     arguments: { command: 'echo hello' },
   } as unknown as ToolExecution
   const request = {
     agent,
     toolName: 'shell',
-    callId: CallId('call-1'),
+    callId: ToolCallId('call-1'),
     reason: 'The command needs a wider capability.',
   } satisfies ApprovalRequest
   const stream = async function* (options: unknown) {
@@ -91,25 +91,43 @@ function installFixture(settingsRoute?: ReviewerRoute) {
       callback(scope)
     },
   }
-  let activeRoute = settingsRoute
-  const settingsScope = {
-    get: () => activeRoute,
-    watch: () => () => undefined,
+  let activeRoute: ReviewerRoute = settingsRoute ?? { provider: 'local', model: 'reviewer' }
+  // DSH 0.1.7 has no settings namespace registration: the route fields are live
+  // `volatile()` references on the plugin Config, and a write goes through the
+  // configuration editor against the owning profile entry.
+  const liveRoute = () => ({ ...activeRoute })
+  const liveConfig = {
+    presetName: 'ai-approval',
+    provider: { get: () => liveRoute().provider },
+    model: { get: () => liveRoute().model },
+    reasoningEffort: { get: () => liveRoute().reasoningEffort },
+    imageMode: { get: () => liveRoute().imageMode },
   }
   const settings = {
-    register: (_ns: string, _schema: unknown, options: { base: ReviewerRoute }) => {
-      activeRoute ??= options.base
-      return settingsScope
+    writable: true,
+    configure: () => () => undefined,
+    update: async () => undefined,
+  }
+  const configEditor = {
+    edit: async (
+      _entry: unknown,
+      change: (current: Record<string, unknown>) => Record<string, unknown>,
+    ) => {
+      change({})
     },
   }
   const context = {
     inject: (dependencies: string[], callback: (scope: any) => void) => {
-      callback(
-        dependencies.includes('settings') ? { ...scope, settings, effect: () => undefined } : scope,
-      )
+      const injected = { ...scope, effect: () => undefined }
+      if (dependencies.includes('settings')) {
+        injected.settings = settings
+        injected.configEditor = configEditor
+        injected.fiber = { entry: { options: { id: 'dsh-ai-approval' } } }
+      }
+      callback(injected)
     },
   } as unknown as Context
-  apply(context, { provider: 'local', model: 'reviewer' })
+  apply(context, liveConfig as never)
   return {
     handlers,
     providerOptions,
@@ -142,7 +160,7 @@ describe('approval reviewer runtime', () => {
       data: {
         commandId: expect.stringMatching(/^ai-approval-/),
         name: 'ai-approval',
-        source: { kind: 'plugin', plugin: 'dsh-ai-approval' },
+        source: { kind: 'dsh-ai-approval' },
       },
     })
     expect(fixture.appended[1]).toMatchObject({
@@ -210,5 +228,20 @@ describe('approval reviewer runtime', () => {
       model: 'gpt-5.2',
       reasoningEffort: 'medium',
     })
+  })
+})
+
+describe('plugin module shape', () => {
+  it('exposes the Config schema on the module the loader resolves', async () => {
+    // DSH 0.1.7's Loader normalizes a plugin module to `exports.default ?? exports`
+    // and the settings form reads `entry.fiber.runtime.Config`. A default export
+    // therefore shadows Config and silently removes the reviewer Settings page.
+    const module = await import('../src/index.ts')
+    expect(module.default).toBeUndefined()
+    expect(typeof module.apply).toBe('function')
+    expect(module.apply).toBe(module.apply)
+    const resolved = module.default ?? module
+    expect(resolved.Config).toBe(module.Config)
+    expect(typeof resolved.Config?.toJSON).toBe('function')
   })
 })

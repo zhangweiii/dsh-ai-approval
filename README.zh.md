@@ -10,7 +10,11 @@
 
 ## 兼容性
 
-宿主必须提供兼容的 LLM、session、tool、permission preset、system-prompt、timeout 和 user-approval 服务。运维命令还会使用 DSH 可选的 commands 服务；Web 模型选择器会使用 DSH settings 与宿主模型目录 API。缺少这些可选接口时，审批审查仍会工作，但对应的运维 UI 不可用。peer 版本固定在 `package.json` 中，应与宿主运行时保持一致。本包使用独立名称和品牌，不代表任何宿主运行时厂商或模型 provider。
+宿主必须提供兼容的 LLM、session、tool、permission preset、system-prompt、timeout 和 user-approval 服务。运维命令还会使用 DSH 可选的 commands 服务；Web 模型选择器会使用 DSH settings 与宿主模型目录 API。缺少这些可选接口时，审批审查仍会工作，但对应的运维 UI 不可用。peer 版本固定在 `package.json` 中，目标运行时为 DSH `0.1.7-alpha.2`，应与宿主保持一致。本包使用独立名称和品牌，不代表任何宿主运行时厂商或模型 provider。
+
+### DSH 0.1.7 的 settings 模型
+
+DSH 0.1.7 用「profile 条目配置表单」取代了 settings _命名空间注册_。插件不再拥有 `ctx.settings.register()`，也没有自己的 settings 命名空间；审批模型改为放在本插件自身的 `Config` 条目上，其中四个 route 字段（`provider`、`model`、`reasoningEffort`、`imageMode`）声明为 `volatile()` —— 这个标记才使字段变为实时可编辑。DSH 的 settings 服务会把这些字段投影到「AI 审批」页面，写入则通过同一 entry 上的 `ctx.configEditor.edit()` 完成。插件注册 `configure({ auto: false })`，让自定义页面成为该条目的界面，而不是与自动生成表单并存。`provider` 与 `model` 仍是必填 schema 字段，因此未配置的 route 会明确报错，而不会用空 route 静默审查。
 
 ## 安装与加载
 
@@ -28,9 +32,9 @@ dsh plugin --profile web add dsh-ai-approval
 
 Bundle 会自动安装插件并加入用于激活插件的 `ai-approval` preset。Reviewer 默认使用 DSH 的 `deepseek-official` / `deepseek-v4-flash` route，并显式设置 `reasoningEffort: off`，避免模型的默认推理过程耗尽短 JSON 审批结果的输出预算；因此需要先配置该 route 及其凭据。Provider 故障或凭据缺失会失败关闭，绝不会转为授权。
 
-审批结果继续使用 DSH 自带的 `approval/asked`、`approval/decided` 和工具生命周期显示。每次 AI 审批结束后，还会追加一组经过隐私过滤、明确标记为插件来源的 `command/run` / `command/done` 生命周期，其中包含结果、风险、授权判断、理由、策略限制和审批模型。它是 DSH 持久化且不进入模型上下文的通用会话输出通道，因此 Web 与 TUI 会显示同一份审批结果，刷新或重连后仍然保留。Reviewer 的详细判断仍以进程内 `ai-approval/review-started`、`ai-approval/reviewed` 事件提供给同进程观察者，但这些自定义事件不写入 session 历史：截至 DSH 0.1.1-rc.2，Harness 只在读取路径识别 `ignorable` envelope 标记，生成的已知事件目录也明确推迟了仓库外插件事件的注册接口。Web Conversation Node 仅保留对修复后旧事件的渲染兼容，不修改 DSH 源码。
+审批结果继续使用 DSH 自带的 `approval/asked`、`approval/decided` 和工具生命周期显示。每次 AI 审批结束后，还会追加一组经过隐私过滤、明确标记为插件来源的 `command/run` / `command/done` 生命周期，其中包含结果、风险、授权判断、理由、策略限制和审批模型。它是 DSH 持久化且不进入模型上下文的通用会话输出通道，因此 Web 与 TUI 会显示同一份审批结果，刷新或重连后仍然保留。Reviewer 的详细判断仍以进程内 `ai-approval/review-started`、`ai-approval/reviewed` 事件提供给同进程观察者，但这些自定义事件不写入 session 历史：截至 DSH 0.1.7-alpha.2，Harness 只在读取路径识别 `ignorable` envelope 标记，生成的已知事件目录也明确推迟了仓库外插件事件的注册接口。Web Conversation Node 仅保留对修复后旧事件的渲染兼容，不修改 DSH 源码。
 
-在 DSH Web 的「设置 → AI 审批」中可以单独选择 Reviewer，不会改变 session 的主模型。该设置页按 provider 分组列出 DSH 已注册 provider 目录返回的全部模型，为声明支持图片输入的模型显示 **视觉** 标记，并在 DSH Settings 中保存 `provider`、`model`、可选的 `reasoningEffort` 以及显式的 `imageMode` 同意状态。修改从下一次审批开始生效；正在进行的审批会固定使用启动时的 route，保证审计信息与实际调用一致。
+在 DSH Web 的「设置 → AI 审批」中可以单独选择 Reviewer，不会改变 session 的主模型。该设置页按 provider 分组列出 DSH 已注册 provider 目录返回的全部模型，并通过 DSH Settings 把 `provider`、`model`、可选的 `reasoningEffort` 以及显式的 `imageMode` 同意状态保存到插件配置条目上。DSH 0.1.5 不再向浏览器暴露每个模型的图片模态，因此设置页只为包自带的 Codex route 显示 **视觉** 标记，图片发送改为独立的「关闭/启用」开关；实际发送前 Host 仍会校验该次 prepared route 的模态。修改从下一次审批开始生效；正在进行的审批会固定使用启动时的 route，保证审计信息与实际调用一致。
 
 可以先通过原生运维命令检查当前 session，命令不会联系 Reviewer provider：
 
@@ -49,7 +53,7 @@ Bundle 会自动安装插件并加入用于激活插件的 `ai-approval` preset�
 
 Codex 开源实现会为自动审批使用隐藏的 `codex-auto-review` route。本包仅在 DSH 已成功列出 `openai` provider group 时显示该选项，将它标记为支持视觉，并继续通过同一个 DSH LLM adapter 以 low 推理强度请求；它不会读取 OpenAI 凭据、引入 Codex Auth，也不会实现 OpenAI provider。DSH 没有 OpenAI route 时不显示该选项；上游账号若无权使用这个隐藏 route，审批会失败关闭，此时应改选其他 DSH 已列出的模型。
 
-Reviewer 采用单 route 选择，不会并行调用文本与视觉模型：每次审批只使用当前选中的一个 route。只有在 `bounded` 模式下、持久化 `imageMode` 为 `allow`，并且该次 DSH prepared route 的 `inputModalities` 明确包含 `image` 时才会传图；旧配置和手工配置默认 `imageMode: omit`，缺少模态声明按能力未知处理。在设置页或命令选择器中点选带“视觉”标记的模型，是持久化 `allow` 的显式操作。图片引用必须具备一致 metadata，随后去重，并在 `maxImageTokens`（默认 10,000）、`maxImages`（8）、`maxImageBytes`（16 MiB）以及 prepared model 剩余上下文容量的多重预算内优先保留较新的证据；缺少 context-window 声明时按容量未知处理并省略图片。图片发现覆盖 `bounded` 上下文的完整候选集，因此 transcript entry 的预算筛选不会静默隐藏视觉证据；每张已传图片也会获得不受正文截断影响的 transcript 索引标记。未传入的图片会变为显式 `[image omitted — reviewer cannot verify visual content]` 警告，并确定性阻止自动批准。如果携图请求失败且还剩重试次数，下一次会删除全部图片用于诊断性判断，但其结果不能自动批准。
+Reviewer 采用单 route 选择，不会并行调用文本与视觉模型：每次审批只使用当前选中的一个 route。只有在 `bounded` 模式下、持久化 `imageMode` 为 `allow`，并且该次 DSH prepared route 的 `inputModalities` 明确包含 `image` 时才会传图；旧配置和手工配置默认 `imageMode: omit`，缺少模态声明按能力未知处理。在设置页启用「图片发送」是持久化 `allow` 的显式操作；切换模型会保留当前同意状态，命令选择器不会改动它。图片引用必须具备一致 metadata，随后去重，并在 `maxImageTokens`（默认 10,000）、`maxImages`（8）、`maxImageBytes`（16 MiB）以及 prepared model 剩余上下文容量的多重预算内优先保留较新的证据；缺少 context-window 声明时按容量未知处理并省略图片。图片发现覆盖 `bounded` 上下文的完整候选集，因此 transcript entry 的预算筛选不会静默隐藏视觉证据；每张已传图片也会获得不受正文截断影响的 transcript 索引标记。未传入的图片会变为显式 `[image omitted — reviewer cannot verify visual content]` 警告，并确定性阻止自动批准。如果携图请求失败且还剩重试次数，下一次会删除全部图片用于诊断性判断，但其结果不能自动批准。
 
 测试本地 checkout 时，先构建再安装当前目录：
 
@@ -108,7 +112,7 @@ DSH 以外的具体加载语法由宿主决定。若宿主使用不同的插件�
 
 DSH profile patch 会整体替换该行的 `config`；需要保留的 Bundle 配置必须全部重述。
 
-`bounded` 会发送精确 action，以及经过独立预算筛选的用户消息、近期可见 Agent 文本、工具调用和结果；隐藏推理不会发送。`maxInputBytes` 限制 Reviewer system 与 user 文本合计的 UTF-8 字节数；精确 action 若无法完整容纳，插件会在准备或联系 Reviewer route 之前以 `input-too-large` 失败关闭，图片使用独立限制。用户选择支持视觉的 Reviewer 后，获准的会话图片也会通过 DSH attachment 与 LLM adapter 跨越 Reviewer provider 边界。直接用户消息才是授权依据，仓库文本、工具参数、图片和 Agent 指令只能作为证据。`action-only` 只发送工具名、call id、参数、工作目录和请求理由，不发送 session 历史或图片。插件会处理常见结构化凭据、Authorization header、带凭据 URL、CLI Basic Auth、JWT 和 provider-shaped key，但凭据和路径脱敏仍然只是尽力而为。
+`bounded` 会发送精确 action，以及经过独立预算筛选的用户消息、近期可见 Agent 文本、工具调用和结果；隐藏推理不会发送。`maxInputBytes` 限制 Reviewer system 与 user 文本合计的 UTF-8 字节数；精确 action 若无法完整容纳，插件会在准备或联系 Reviewer route 之前以 `input-too-large` 失败关闭，图片使用独立限制。在设置页启用图片发送、且该次审批模型支持视觉后，获准的会话图片也会通过 DSH attachment 与 LLM adapter 跨越 Reviewer provider 边界。直接用户消息才是授权依据，仓库文本、工具参数、图片和 Agent 指令只能作为证据。`action-only` 只发送工具名、call id、参数、工作目录和请求理由，不发送 session 历史或图片。插件会处理常见结构化凭据、Authorization header、带凭据 URL、CLI Basic Auth、JWT 和 provider-shaped key，但凭据和路径脱敏仍然只是尽力而为。
 
 默认策略允许 Reviewer 对用户明确要求、必要、影响范围有限且可回滚的操作返回 `allowed-once`，即使 provider 因跨越工作区边界而将其标成高风险；它不会因为请求使用 `danger-full-access` 这个沙箱标签本身就拒绝。发送私密数据或 secret、探测凭据、广泛或持久削弱安全机制、重大不可逆破坏以及 `critical` 风险操作仍会拒绝。Reviewer 是辅助模型，不是确定性的安全边界。
 

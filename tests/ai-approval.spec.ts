@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { Message } from '@deepseek-ai/dsh-llm'
 import type { ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
@@ -36,12 +36,12 @@ function requestAndExecution(
   const request = {
     agent,
     toolName: 'shell',
-    callId: CallId('call-1'),
+    callId: ToolCallId('call-1'),
     reason: 'The command needs network access.',
   } satisfies ApprovalRequest
   const execution = {
     agent,
-    callId: CallId('call-1'),
+    callId: ToolCallId('call-1'),
     name: 'shell',
     arguments: { command: 'gh repo view private/repo' },
   } as unknown as Readonly<ToolExecution>
@@ -239,6 +239,36 @@ describe('approval reviewer policy helpers', () => {
     ).toThrow(/invalid policy configuration/)
   })
 
+  it('reads the reviewer route from live volatile config references', () => {
+    // DSH 0.1.7 resolves each `volatile()` route field into a live reference.
+    const live = {
+      provider: 'openai',
+      model: 'gpt-5.2',
+      reasoningEffort: 'medium' as string | undefined,
+    }
+    const config = resolveConfig({
+      provider: { get: () => live.provider },
+      model: { get: () => live.model },
+      reasoningEffort: { get: () => live.reasoningEffort },
+      imageMode: { get: () => 'omit' as const },
+    } as never)
+    expect(config).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-5.2',
+      reasoningEffort: 'medium',
+    })
+    // A later settings write is visible through the same references on re-resolve.
+    live.model = 'gpt-5.3'
+    expect(
+      resolveConfig({
+        provider: { get: () => live.provider },
+        model: { get: () => live.model },
+        reasoningEffort: { get: () => live.reasoningEffort },
+        imageMode: { get: () => 'omit' as const },
+      } as never),
+    ).toMatchObject({ model: 'gpt-5.3' })
+  })
+
   it('uses a Codex-like boundary-review policy', () => {
     expect(REVIEW_SYSTEM_PROMPT).toContain('direct user messages explicitly authorize')
     expect(REVIEW_SYSTEM_PROMPT).toContain('Do not deny solely because')
@@ -312,7 +342,7 @@ describe('approval reviewer policy helpers', () => {
         content: [
           {
             type: 'tool-call',
-            id: CallId('tool-1'),
+            id: ToolCallId('tool-1'),
             name: 'shell',
             arguments: '{"command":"git status"}',
           },
@@ -321,15 +351,10 @@ describe('approval reviewer policy helpers', () => {
       },
       {
         id: 'm5',
-        role: 'user',
-        content: [
-          {
-            type: 'tool-result',
-            toolCallId: CallId('tool-1'),
-            content: [{ type: 'text', text: 'clean' }],
-          },
-        ],
-        source: { kind: 'tool', callId: CallId('tool-1') },
+        role: 'tool',
+        toolCallId: ToolCallId('tool-1'),
+        content: [{ type: 'text', text: 'clean' }],
+        source: { kind: 'tool', callId: ToolCallId('tool-1') },
       },
     ] as unknown as Message[]
     const { request, execution } = requestAndExecution(messages)
@@ -344,16 +369,50 @@ describe('approval reviewer policy helpers', () => {
     expect(prompt).toContain('Original task: inspect and repair')
     expect(prompt).toContain('Latest instruction: only update')
     expect(prompt).toContain('tool call shell')
+    // 0.1.7 removed the nested `tool-result` block: the projection attributes the
+    // tool-role message to its call id instead.
     expect(prompt).toContain('tool result')
+    expect(prompt).toContain('tool-1')
   })
 
-  it('does not treat plugin context as a direct user anchor', () => {
+  it('flags an errored tool-role message in the reviewer transcript', () => {
+    const messages = [
+      {
+        id: 'm1',
+        role: 'user',
+        content: [{ type: 'text', text: 'Run the check.' }],
+        source: { kind: 'user' },
+      },
+      {
+        id: 'm2',
+        role: 'tool',
+        toolCallId: ToolCallId('tool-err'),
+        isError: true,
+        content: [{ type: 'text', text: 'command failed' }],
+        source: { kind: 'tool', callId: ToolCallId('tool-err') },
+      },
+    ] as unknown as Message[]
+    const { request, execution } = requestAndExecution(messages)
+    const prompt = buildReviewPrompt(request, execution, {
+      maxMessageTokens: 256,
+      maxToolTokens: 256,
+      maxEntryTokens: 128,
+      maxRecentEntries: 4,
+      maxInputBytes: 4_000,
+      contextMode: 'bounded',
+    })
+    expect(prompt).toContain('tool result (error) tool-err')
+    expect(prompt).toContain('command failed')
+  })
+
+  it('does not treat a producer-authored context message as a direct user anchor', () => {
     const messages = [
       {
         id: 'context',
         role: 'user',
         content: [{ type: 'text', text: 'Injected runtime context.' }],
-        source: { kind: 'plugin', plugin: 'runtime' },
+        // 0.1.7 has no shared `plugin` source: every producer declares its own kind.
+        source: { kind: 'runtime-context' },
       },
       {
         id: 'user',
@@ -398,16 +457,15 @@ describe('approval reviewer policy helpers', () => {
       {
         id: 'visual-2',
         role: 'user',
-        content: [
-          { type: 'text', text: 'Use the latest screenshot.' },
-          latest,
-          {
-            type: 'tool-result',
-            toolCallId: CallId('visual-tool'),
-            content: [latest],
-          },
-        ],
+        content: [{ type: 'text', text: 'Use the latest screenshot.' }, latest],
         source: { kind: 'user' },
+      },
+      {
+        id: 'visual-3',
+        role: 'tool',
+        toolCallId: ToolCallId('visual-tool'),
+        content: [latest],
+        source: { kind: 'tool', callId: ToolCallId('visual-tool') },
       },
     ] as unknown as Message[]
     const { request, execution } = requestAndExecution(messages)

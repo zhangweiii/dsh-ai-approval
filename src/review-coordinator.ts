@@ -1,4 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
+// Type-only: `dsh-commands` is an OPTIONAL peer (its service is absent on TUI-only
+// hosts), so the CommandId brand must never become a runtime import.
+import type { CommandId } from '@deepseek-ai/dsh-commands'
 import type { Message, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
@@ -25,7 +28,7 @@ import type {
   ReviewerRisk,
 } from './config.js'
 import { ReviewerRouteSource } from './reviewer-route-settings.js'
-import type { AiApprovalReviewedData } from './types.js'
+import { REVIEW_COMMAND_SOURCE, type AiApprovalReviewedData } from './types.js'
 
 function auditField(text: string, redactPaths: boolean): string {
   return privacyText(text, redactPaths).replace(/[\u0000-\u001f\u007f]+/g, ' ')
@@ -282,12 +285,7 @@ export class ReviewCoordinator {
     const previous = this.cursors.get(s)
     if (!previous?.length) return messages
     if (!previous.every((id, i) => String(messages[i]?.id) === id)) return messages
-    const users = messages.filter(
-      (m) =>
-        m.role === 'user' &&
-        m.source.kind === 'user' &&
-        !m.content.some((b) => b.type === 'tool-result'),
-    )
+    const users = messages.filter((m) => m.role === 'user' && m.source.kind === 'user')
     const anchors = [users[0], users.at(-1)].filter(
       (m, i, a): m is Message => m !== undefined && a.findIndex((x) => x?.id === m.id) === i,
     )
@@ -363,38 +361,19 @@ export class ReviewCoordinator {
   }
 }
 
-type StandardCommandAppender = {
-  (
-    type: 'command/run',
-    data: {
-      commandId: string
-      name: string
-      source: { kind: 'plugin'; plugin: 'dsh-ai-approval' }
-    },
-  ): unknown
-  (
-    type: 'command/done',
-    data: {
-      commandId: string
-      kind: 'success'
-      text: string
-    },
-  ): unknown
-}
-
 /**
  * Publish through DSH's durable command lifecycle, the standard transcript
  * channel consumed by both Web and TUI without entering model history.
  */
 function appendStandardReviewOutput(s: Session, review: AiApprovalReviewedData): void {
-  const append = s.append.bind(s) as unknown as StandardCommandAppender
-  const commandId = `ai-approval-${crypto.randomUUID()}`
-  append('command/run', {
+  const commandId = `ai-approval-${crypto.randomUUID()}` as CommandId
+  // `command/run` is not a surface-eligible event, so no surfaceOp is required.
+  s.append('command/run', {
     commandId,
     name: 'ai-approval',
-    source: { kind: 'plugin', plugin: 'dsh-ai-approval' },
+    source: { kind: REVIEW_COMMAND_SOURCE },
   })
-  append('command/done', {
+  s.append('command/done', {
     commandId,
     kind: 'success',
     text: formatReviewSummary(review),

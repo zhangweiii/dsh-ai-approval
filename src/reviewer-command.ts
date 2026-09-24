@@ -51,7 +51,7 @@ function statusText(
   readiness: ReviewerReadiness,
   agent: Agent,
 ): string {
-  const currentPreset = permissionPresets.current(agent.session.events)
+  const currentPreset = permissionPresets.current(agent.session)
   const active = readiness.isReady() && currentPreset === config.presetName
   const state = readiness.isReady() ? (active ? 'active' : 'inactive') : 'unavailable'
   return [
@@ -70,7 +70,7 @@ function doctorText(
   readiness: ReviewerReadiness,
   agent: Agent,
 ): string {
-  const currentPreset = permissionPresets.current(agent.session.events)
+  const currentPreset = permissionPresets.current(agent.session)
   const presetMatches = currentPreset === config.presetName
   const active = readiness.isReady() && presetMatches
   const presetDetail = active

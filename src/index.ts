@@ -9,6 +9,7 @@ export * from './assessment.js'
 export * from './config.js'
 export * from './types.js'
 export { REVIEWER_SETTINGS_NAMESPACE } from './reviewer-route-settings.js'
+export type { Config as PluginConfig } from './config.js'
 export { redactSensitiveText } from './privacy.js'
 export {
   buildReviewContext,
@@ -27,17 +28,25 @@ declare module '@deepseek-ai/cordis' {
     permissionPresets: PermissionPresetService
   }
 }
-/** Install the independent AI approval reviewer plugin. */
-export function apply(ctx: Context, config: import('./config.js').Config): void {
+/**
+ * Install the independent AI approval reviewer plugin.
+ *
+ * Deliberately the ONLY plugin export shape: DSH 0.1.7's Loader normalizes a
+ * module to `exports.default ?? exports`, so a `export default apply` makes the
+ * whole module resolve to this bare function and hides the `Config` schema. The
+ * settings form reads `entry.fiber.runtime.Config`, so that shadowing silently
+ * removed the reviewer page from Settings. Exporting named `apply` + `Config`
+ * keeps the module object as the plugin, which is how DSH's own function
+ * plugins are shaped.
+ */
+export function apply(ctx: Context, config: Config): void {
   const resolved = resolveConfig(config)
   const route = new ReviewerRouteSource(resolved)
   const readiness = new ReviewerReadiness()
-  installReviewerRouteSettings(ctx, resolved, route)
+  installReviewerRouteSettings(ctx, config, route)
   installReviewerCommands(ctx, resolved, route, readiness)
   ctx.inject(['llm', 'permissionPresets'], (scope) => {
     new AiApprovalPlugin(scope, resolved, route).install()
     scope.effect(() => readiness.activate(), 'dsh-ai-approval: reviewer runtime readiness')
   })
 }
-/** Default plugin installer; equivalent to {@link apply}. */
-export default apply

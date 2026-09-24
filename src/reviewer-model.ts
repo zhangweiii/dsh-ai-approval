@@ -6,7 +6,8 @@ import type {
   Message,
   TokenUsage,
 } from '@deepseek-ai/dsh-llm'
-import { BlockAssembler, createUserMessage, deepFreeze } from '@deepseek-ai/dsh-llm'
+import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { deepFreeze } from '@deepseek-ai/dsh-util-values'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm/brand'
 import {
   buildReviewContext,
@@ -17,6 +18,21 @@ import { parseAssessment, type ReviewerAssessment } from './assessment.js'
 import type { ResolvedConfig, ReviewerRoute } from './config.js'
 import type { ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
+
+/**
+ * Producer kind for the reviewer request message.
+ *
+ * DSH 0.1.7 removed the shared catch-all `plugin` message source; each producer
+ * now declares its own `kind` through {@link MessageSourceMap} merging, exactly
+ * as the shipped session-title plugin does.
+ */
+export const PLUGIN_MESSAGE_SOURCE = 'dsh-ai-approval'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'dsh-ai-approval': { kind: 'dsh-ai-approval' }
+  }
+}
 /** System instruction sent to the independent reviewer model. */
 export const REVIEW_SYSTEM_PROMPT = [
   'You are an independent AI approval reviewer integrated into a host agent.',
@@ -198,7 +214,7 @@ export class ReviewerModel {
         messages: [
           createUserMessage({
             content: [{ type: 'text', text: context.text }, ...context.images],
-            source: { kind: 'plugin', plugin: 'dsh-ai-approval' },
+            source: { kind: PLUGIN_MESSAGE_SOURCE },
           }),
         ],
         system: REVIEW_SYSTEM_PROMPT,

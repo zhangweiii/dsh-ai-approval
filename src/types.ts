@@ -1,4 +1,4 @@
-import type { CallId, TokenUsage } from '@deepseek-ai/dsh-llm'
+import type { ToolCallId, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type {
   ReviewerAuthorization,
@@ -16,7 +16,7 @@ export type AiApprovalReviewId = string
 /** Durable facts available as soon as the independent review starts. */
 export interface AiApprovalReviewStartedData {
   reviewId: AiApprovalReviewId
-  callId?: CallId
+  callId?: ToolCallId
   toolName: string
   reason: string
   provider: string
@@ -55,5 +55,23 @@ declare module '@deepseek-ai/dsh-session/types' {
     'ai-approval/review-started': AiApprovalReviewStartedData
     /** Legacy event retained only so repaired historical cards remain renderable. */
     'ai-approval/reviewed': AiApprovalReviewedData
+  }
+}
+
+/**
+ * The `command/run` producer record for this package's synthetic review
+ * lifecycle.
+ *
+ * DSH declares `CommandSourceMap` merge-extensible for exactly this case, but
+ * its shipped vocabulary lists only `user` (in 0.1.5 and 0.1.7 alike), so the
+ * review summary's author has to be declared here rather than cast away. The
+ * client renders command rows from `commandId` and `name` and does not read
+ * `source`, so this is audit provenance, not a rendering input.
+ */
+export const REVIEW_COMMAND_SOURCE = 'dsh-ai-approval'
+
+declare module '@deepseek-ai/dsh-commands' {
+  interface CommandSourceMap {
+    'dsh-ai-approval': { kind: 'dsh-ai-approval' }
   }
 }

@@ -34,7 +34,18 @@ import {
 } from '../src/client/reviewer-model-selector.ts'
 
 function ok<T>(value: T) {
-  return { result: { ok: true as const, value } }
+  return { ok: true as const, value }
+}
+
+function namespaceView(value: unknown, revision: number) {
+  return {
+    ns: 'dsh-ai-approval',
+    schema: {},
+    value,
+    applies: 'live' as const,
+    secrets: [],
+    revision,
+  }
 }
 
 const state: ReviewerModelState = {
@@ -46,7 +57,6 @@ const state: ReviewerModelState = {
         {
           id: 'codex-auto-review',
           name: 'Codex Auto Review',
-          inputModalities: ['text', 'image'],
           reasoning: {
             efforts: [
               { id: 'low', name: 'Low' },
@@ -76,19 +86,22 @@ const state: ReviewerModelState = {
 
 function apiFixture(mutate = vi.fn()) {
   const api: ReviewerModelApi = {
-    llm: { models: vi.fn(async () => ok({ groups: state.groups, failures: [] })) },
+    session: {
+      modelCatalog: vi.fn(async () =>
+        ok({
+          default: { provider: 'openai', model: 'codex-auto-review' },
+          routableProviders: ['openai', 'local'],
+          groups: state.groups,
+          failures: [],
+        }),
+      ),
+    },
     settings: {
       describe: vi.fn(async () =>
         ok({
           writable: true,
           hasDocument: true,
-          namespaces: [
-            {
-              ns: 'dsh-ai-approval',
-              value: state.selection,
-              revision: state.revision,
-            },
-          ],
+          namespaces: [namespaceView(state.selection, state.revision)],
         }),
       ),
       mutate,
@@ -122,13 +135,7 @@ describe('reviewer model selector UI', () => {
   it('renders provider groups and reasoning as a Web settings page', async () => {
     vi.stubGlobal('navigator', { language: 'zh-CN' })
     const api = apiFixture(
-      vi.fn(async () =>
-        ok({
-          ns: 'dsh-ai-approval',
-          value: { provider: 'local', model: 'reviewer' },
-          revision: 4,
-        }),
-      ),
+      vi.fn(async () => ok(namespaceView({ provider: 'local', model: 'reviewer' }, 4))),
     )
     const page = render(api, [state, undefined, false])
     const pageNodes = nodes(page)
@@ -144,14 +151,13 @@ describe('reviewer model selector UI', () => {
     localModel.props.onClick()
     await vi.waitFor(() => expect(api.settings.mutate).toHaveBeenCalledOnce())
     expect(api.settings.mutate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        expectedRevision: 3,
-        ops: expect.arrayContaining([
-          { op: 'set', path: ['provider'], value: 'local' },
-          { op: 'set', path: ['reasoningEffort'], value: null },
-          { op: 'set', path: ['imageMode'], value: 'omit' },
-        ]),
-      }),
+      'dsh-ai-approval',
+      expect.arrayContaining([
+        { op: 'set', path: ['provider'], value: 'local' },
+        { op: 'set', path: ['reasoningEffort'], value: null },
+        { op: 'set', path: ['imageMode'], value: 'allow' },
+      ]),
+      3,
     )
 
     const mediumEffort = pageNodes.find(
@@ -160,7 +166,28 @@ describe('reviewer model selector UI', () => {
     mediumEffort.props.onClick()
     await vi.waitFor(() => expect(api.settings.mutate).toHaveBeenCalledTimes(2))
     hooks.effects[0]?.()
-    await vi.waitFor(() => expect(api.llm.models).toHaveBeenCalled())
+    await vi.waitFor(() => expect(api.session.modelCatalog).toHaveBeenCalled())
+  })
+
+  it('toggles image sharing without changing the selected reviewer route', async () => {
+    vi.stubGlobal('navigator', { language: 'zh-CN' })
+    const api = apiFixture(vi.fn(async () => ok(namespaceView(state.selection, 4))))
+    const pageNodes = nodes(render(api, [state, undefined, false]))
+    const off = pageNodes.find(
+      (node) => node.type === 'button' && node.props['data-image-mode'] === 'omit',
+    )
+    off.props.onClick()
+    await vi.waitFor(() => expect(api.settings.mutate).toHaveBeenCalledOnce())
+    expect(api.settings.mutate).toHaveBeenCalledWith(
+      'dsh-ai-approval',
+      expect.arrayContaining([
+        { op: 'set', path: ['provider'], value: 'openai' },
+        { op: 'set', path: ['model'], value: 'codex-auto-review' },
+        { op: 'set', path: ['reasoningEffort'], value: 'low' },
+        { op: 'set', path: ['imageMode'], value: 'omit' },
+      ]),
+      3,
+    )
   })
 
   it('keeps a mutation error visible after reloading the last committed selection', async () => {
@@ -177,18 +204,18 @@ describe('reviewer model selector UI', () => {
   it('renders a disabled loading state and reports an initial catalog failure', async () => {
     vi.stubGlobal('navigator', { language: 'zh-CN' })
     const api = apiFixture()
-    vi.mocked(api.llm.models).mockRejectedValueOnce(new Error('catalog failed'))
+    vi.mocked(api.session.modelCatalog).mockRejectedValueOnce(new Error('catalog failed'))
     const element = render(api, [undefined, undefined, false])
     expect(JSON.stringify(element.props.children)).toContain('正在加载审批模型')
     hooks.effects[0]?.()
     await vi.waitFor(() => expect(hooks.setters[1]).toHaveBeenCalledWith('catalog failed'))
   })
 
-  it('registers only through the additive Web settings section when connection exists', () => {
+  it('registers only through the additive Web settings section when the remote exists', () => {
     vi.stubGlobal('navigator', { language: 'zh-CN' })
     let Entry: (() => unknown) | undefined
     const ctx = {
-      connection: { api: apiFixture() },
+      remote: apiFixture(),
       slots: {
         inject: vi.fn((_name: string, callback: () => void) => callback()),
         register: vi.fn((_options: unknown, component: () => unknown) => {

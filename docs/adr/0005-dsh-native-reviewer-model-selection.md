@@ -6,7 +6,14 @@ The reviewer needs a Web model picker that can use any provider already register
 
 ## Decision
 
-Register a `dsh-ai-approval` DSH Settings namespace containing only `provider`, `model`, and optional `reasoningEffort`. The Web control reads DSH's host-wide `llm.models` catalog and updates that namespace through the standard settings mutation API. The configured Bundle route remains the base layer and fallback when no settings provider is mounted.
+Store the reviewer route on this plugin's own `Config` entry as four `volatile()` fields (`provider`, `model`, optional `reasoningEffort`, and `imageMode`), and expose them to the Web control through DSH's settings/config-editor surface. The Web control reads DSH's host-wide `llm.models` catalog and writes the selection back through `ctx.configEditor.edit()` on that same profile entry. The configured Bundle route remains the base layer and fallback when no settings or config-editor provider is mounted.
+
+> **Superseded mechanism (DSH 0.1.7).** The original decision registered a `dsh-ai-approval`
+> Settings _namespace_ through `ctx.settings.register()`. DSH 0.1.7 removed that API: `ctx.settings`
+> is now a form service over profile entries, and a plugin owns no settings namespace. The route
+> therefore moved onto the plugin's own entry with `volatile()` fields. The observable contract —
+> one route, snapshot per review, persisted through DSH's normal layer — is unchanged; only the
+> registration surface moved.
 
 Snapshot the resolved route at the start of one review. Retries and audit events for that review use the same snapshot; later settings changes affect only later approval requests.
 

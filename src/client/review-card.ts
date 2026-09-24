@@ -1,5 +1,5 @@
 import { createElement, type CSSProperties, type ReactElement, type ReactNode } from 'react'
-import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 
 const cardStyle: CSSProperties = {
   border: '1px solid color-mix(in srgb, currentColor 14%, transparent)',

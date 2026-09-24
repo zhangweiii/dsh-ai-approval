@@ -13,7 +13,7 @@ export default defineConfig({
   deps: {
     neverBundle: [
       'react',
-      '@deepseek-ai/dsh-client-runtime/client',
+      '@deepseek-ai/dsh-client-ui-chat/client',
       '@deepseek-ai/dsh-client-ui-conversation/client',
     ],
   },

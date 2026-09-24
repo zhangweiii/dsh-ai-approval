@@ -6,71 +6,49 @@ import {
   type CSSProperties,
   type ReactElement,
 } from 'react'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+// Type-only: the 'remote' Context merge plus the model-catalog and settings wire vocabulary.
+import type {
+  ModelCatalog,
+  ModelCatalogFailure,
+  ModelCatalogModel,
+  ModelProviderGroup,
+  RemoteResult,
+  SettingsDescribeValue,
+  SettingsNamespaceView,
+  SettingsPathOpView,
+} from '@deepseek-ai/dsh-api-remotes/client'
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type { ReviewerRoute } from '../config.js'
 
 const SETTINGS_NAMESPACE = 'dsh-ai-approval'
 export const CODEX_AUTO_REVIEW_MODEL = 'codex-auto-review'
 
-interface RpcErrorView {
-  message: string
-}
+export type ReviewerCatalogModel = ModelCatalogModel
+export type ReviewerCatalogGroup = ModelProviderGroup
+export type ReviewerCatalogFailure = ModelCatalogFailure
 
-interface RpcResponseView<T> {
-  result: { ok: true; value: T } | { ok: false; error: RpcErrorView }
-}
-
-export interface ReviewerCatalogModel {
-  id: string
-  name: string
-  description?: string
-  inputModalities?: Array<'text' | 'image'>
-  reasoning?: {
-    efforts: Array<{ id: string; name: string; description?: string }>
-    defaultEffort?: string
-  }
-}
-
-export interface ReviewerCatalogGroup {
-  id: string
-  name: string
-  models: ReviewerCatalogModel[]
-}
-
-interface ReviewerSettingsView {
-  ns: string
-  value: unknown
-  revision: number
-}
-
+/**
+ * The two Remote namespaces the Web surfaces read and write. Kept as a narrow
+ * seam so the page data flow stays testable without a live Client context.
+ */
 export interface ReviewerModelApi {
-  llm: {
-    models(payload: {}): Promise<
-      RpcResponseView<{
-        groups: ReviewerCatalogGroup[]
-        failures: Array<{ id: string; name: string; message: string }>
-      }>
-    >
+  session: {
+    modelCatalog(): Promise<RemoteResult<ModelCatalog>>
   }
   settings: {
-    describe(payload: {}): Promise<
-      RpcResponseView<{
-        writable: boolean
-        hasDocument: boolean
-        namespaces: ReviewerSettingsView[]
-      }>
-    >
-    mutate(payload: {
-      ns: string
-      ops: Array<{ op: 'set'; path: string[]; value: unknown } | { op: 'unset'; path: string[] }>
-      expectedRevision?: number
-    }): Promise<RpcResponseView<ReviewerSettingsView>>
+    describe(): Promise<RemoteResult<SettingsDescribeValue>>
+    mutate(
+      ns: string,
+      ops: SettingsPathOpView[],
+      expectedRevision: number | undefined,
+    ): Promise<RemoteResult<SettingsNamespaceView>>
   }
 }
 
 export interface ReviewerModelState {
-  groups: ReviewerCatalogGroup[]
-  failures: Array<{ id: string; name: string; message: string }>
+  groups: readonly ReviewerCatalogGroup[]
+  failures: readonly ReviewerCatalogFailure[]
   selection: ReviewerRoute
   writable: boolean
   revision: number
@@ -89,7 +67,7 @@ interface SettingsSectionSlots {
   ): () => void
 }
 
-function withCodexAutoReview(groups: ReviewerCatalogGroup[]): ReviewerCatalogGroup[] {
+function withCodexAutoReview(groups: readonly ReviewerCatalogGroup[]): ReviewerCatalogGroup[] {
   return groups.map((group) => {
     if (group.id !== 'openai' || group.models.some((model) => model.id === CODEX_AUTO_REVIEW_MODEL))
       return group
@@ -100,7 +78,6 @@ function withCodexAutoReview(groups: ReviewerCatalogGroup[]): ReviewerCatalogGro
           id: CODEX_AUTO_REVIEW_MODEL,
           name: 'Codex Auto Review',
           description: 'OpenAI Codex approval-review route, requested through DSH.',
-          inputModalities: ['text', 'image'],
           reasoning: {
             efforts: [
               { id: 'low', name: 'Low' },
@@ -117,9 +94,9 @@ function withCodexAutoReview(groups: ReviewerCatalogGroup[]): ReviewerCatalogGro
   })
 }
 
-function valueOf<T>(response: RpcResponseView<T>): T {
-  if (!response.result.ok) throw new Error(response.result.error.message)
-  return response.result.value
+function valueOf<T>(response: RemoteResult<T>): T {
+  if (!response.ok) throw new Error(response.error.message)
+  return response.value
 }
 
 function routeOf(value: unknown): ReviewerRoute {
@@ -143,8 +120,8 @@ export function selectionKey(selection: Pick<ReviewerRoute, 'provider' | 'model'
 
 export async function loadReviewerModelState(api: ReviewerModelApi): Promise<ReviewerModelState> {
   const [catalogResponse, settingsResponse] = await Promise.all([
-    api.llm.models({}),
-    api.settings.describe({}),
+    api.session.modelCatalog(),
+    api.settings.describe(),
   ])
   const catalog = valueOf(catalogResponse)
   const settings = valueOf(settingsResponse)
@@ -164,10 +141,9 @@ export async function saveReviewerModelSelection(
   selection: ReviewerRoute,
   expectedRevision?: number,
 ): Promise<{ selection: ReviewerRoute; revision: number }> {
-  const response = await api.settings.mutate({
-    ns: SETTINGS_NAMESPACE,
-    ...(expectedRevision === undefined ? {} : { expectedRevision }),
-    ops: [
+  const response = await api.settings.mutate(
+    SETTINGS_NAMESPACE,
+    [
       { op: 'set', path: ['provider'], value: selection.provider },
       { op: 'set', path: ['model'], value: selection.model },
       ...(selection.reasoningEffort === undefined
@@ -181,7 +157,8 @@ export async function saveReviewerModelSelection(
           ]),
       { op: 'set', path: ['imageMode'], value: selection.imageMode ?? 'omit' },
     ],
-  })
+    expectedRevision,
+  )
   const section = valueOf(response)
   return { selection: routeOf(section.value), revision: section.revision }
 }
@@ -248,12 +225,17 @@ const modelButtonStyle: CSSProperties = {
   cursor: 'pointer',
 }
 
-export function reviewerModelAcceptsImages(model: ReviewerCatalogModel): boolean {
-  return model.inputModalities?.includes('image') === true
+/**
+ * DSH 0.1.5 no longer carries per-model `inputModalities` on the Client, so
+ * only the package-owned Codex route is known to accept image input here. The
+ * Host still verifies the exact prepared route before any image is sent.
+ */
+export function reviewerModelAcceptsImages(model: Pick<ReviewerCatalogModel, 'id'>): boolean {
+  return model.id === CODEX_AUTO_REVIEW_MODEL
 }
 
 function modelOf(
-  groups: ReviewerCatalogGroup[],
+  groups: readonly ReviewerCatalogGroup[],
   selection: Pick<ReviewerRoute, 'provider' | 'model'>,
 ): ReviewerCatalogModel | undefined {
   return groups
@@ -366,8 +348,8 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
           'p',
           { style: { margin: '5px 0 0', fontSize: 13, lineHeight: 1.55, opacity: 0.62 } },
           zh
-            ? '为工具权限申请选择独立的审批模型。选择带“视觉”标记的模型会允许把预算内图片发送给该 Reviewer provider。'
-            : 'Choose an independent reviewer for tool permission requests. Selecting a Vision model allows budgeted images to be sent to that reviewer provider.',
+            ? '为工具权限申请选择独立的审批模型；只有在你确认所选审批模型支持图片输入时才启用图片发送。'
+            : 'Choose an independent reviewer for tool permission requests, and enable image sharing only for reviewers that accept image input.',
         ),
       ),
     ),
@@ -482,7 +464,7 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
                             ...(model.reasoning?.defaultEffort === undefined
                               ? {}
                               : { reasoningEffort: model.reasoning.defaultEffort }),
-                            imageMode: reviewerModelAcceptsImages(model) ? 'allow' : 'omit',
+                            imageMode: state.selection.imageMode ?? 'omit',
                           }),
                       },
                       selectedMark(active),
@@ -545,6 +527,64 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
                   }),
                 ),
               ),
+            ),
+          ),
+          createElement(
+            'div',
+            {
+              key: 'images',
+              style: {
+                marginTop: 26,
+                paddingTop: 20,
+                borderTop: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+              },
+            },
+            createElement(
+              'h3',
+              { style: { margin: '0 0 5px', fontSize: 14 } },
+              zh ? '图片发送' : 'Image sharing',
+            ),
+            createElement(
+              'p',
+              { style: { margin: '0 0 12px', fontSize: 12, opacity: 0.55 } },
+              zh
+                ? '允许把会话中的图片发送给审批模型；仅在该次审批的模型确实支持图片输入时才会发送。'
+                : 'Allow conversation images to be sent to the reviewer. Images are only sent when that review actually uses a model that accepts image input.',
+            ),
+            createElement(
+              'div',
+              { style: { display: 'flex', flexWrap: 'wrap', gap: 7 } },
+              ...[
+                { id: 'omit' as const, name: zh ? '关闭' : 'Off' },
+                { id: 'allow' as const, name: zh ? '启用' : 'On' },
+              ].map((mode) => {
+                const active = (state.selection.imageMode ?? 'omit') === mode.id
+                return createElement(
+                  'button',
+                  {
+                    key: mode.id,
+                    type: 'button',
+                    disabled,
+                    'aria-pressed': active,
+                    'data-image-mode': mode.id,
+                    onClick: () => void save({ ...state.selection, imageMode: mode.id }),
+                    style: {
+                      padding: '7px 12px',
+                      border: '1px solid color-mix(in srgb, currentColor 16%, transparent)',
+                      borderRadius: 8,
+                      background: active
+                        ? 'color-mix(in srgb, #2563eb 12%, transparent)'
+                        : 'transparent',
+                      color: 'inherit',
+                      font: 'inherit',
+                      fontSize: 12,
+                      cursor: disabled ? 'not-allowed' : 'pointer',
+                      opacity: disabled ? 0.58 : 1,
+                    },
+                  },
+                  mode.name,
+                )
+              }),
             ),
           ),
           ...(currentModel?.reasoning?.efforts.length
@@ -666,11 +706,11 @@ export function ReviewerModelSelector({ api }: { api: ReviewerModelApi }): React
 }
 
 export function installReviewerModelSelector(ctx: ClientContext): void {
-  const connection = (ctx as ClientContext & { connection?: { api: ReviewerModelApi } }).connection
-  if (connection === undefined) return
+  const api = ctx.remote as ReviewerModelApi | undefined
+  if (api === undefined) return
   // The host owns this slot; keep the adapter narrow so conversation-package type changes stay localized.
   const slots = ctx.slots as unknown as SettingsSectionSlots
-  const Entry = () => createElement(ReviewerModelSelector, { api: connection.api })
+  const Entry = () => createElement(ReviewerModelSelector, { api })
   slots.inject('settings.section', () =>
     slots.register(
       {

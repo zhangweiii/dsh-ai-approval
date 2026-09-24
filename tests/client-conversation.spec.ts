@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type {
   ConversationMatch,
   ConversationNodeContext,
-} from '@deepseek-ai/dsh-client-runtime/client'
+} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { aiApprovalReviewDefinition } from '../src/client/conversation.ts'
 
 const started = {
@@ -128,6 +128,37 @@ describe('AI approval conversation node', () => {
       status: 'rejected',
       outcome: 'allow',
       policyBlock: { maxRisk: 'medium' },
+    })
+  })
+})
+
+describe('AI approval chat node registration', () => {
+  it('binds the Chat copy namespace and its hooks face on the keyed slot', async () => {
+    const { installAiApprovalConversationNode } = await import('../src/client/conversation.ts')
+    const registered: Array<{ options: any; component: unknown }> = []
+    const injected: string[] = []
+    const ctx = {
+      uiConversation: { events: { register: () => () => undefined } },
+      slots: {
+        inject: (key: string, callback: () => void) => {
+          injected.push(key)
+          callback()
+        },
+        register: (options: any, component: unknown) => {
+          registered.push({ options, component })
+          return () => undefined
+        },
+      },
+    } as never
+    installAiApprovalConversationNode(ctx)
+    expect(injected).toEqual(['conversation.chat.node'])
+    // 0.1.7 types the keyed Chat slot's copy as the Chat package's own `chat`
+    // dictionary; registering with the Conversation shell namespace no longer
+    // satisfies the slot contract.
+    expect(registered[0]?.options).toMatchObject({
+      name: 'conversation.chat.node',
+      key: 'ai-approval-review',
+      locale: 'chat',
     })
   })
 })
