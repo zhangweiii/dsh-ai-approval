@@ -45,6 +45,17 @@ All notable changes are documented here. This project is pre-release; configurat
   `0.1.0-rc.7`/`0.1.5-rc.2` transitive resolutions in place, which made a public type re-export
   (`assertNever`) resolve against an older `@deepseek-ai/dsh-llm` and broke the runtime contract
   suite.
+- Pinned `tsdown` back to `0.21.0` (from `0.22.14`) to restore the documented Node 20 build target.
+  `tsdown@0.22.14` declares `engines.node: ^22.18.0 || >=24.11.0`, so on Node 20 it cannot use
+  native TypeScript stripping to read `tsdown.config.ts` and falls back to the optional peer
+  `unrun` (whose own engines are `^22.13.0 || >=24.0.0`); because that peer is not installed, the
+  CI `pnpm build` step failed with `Failed to import module "unrun"`. This is a pre-existing
+  failure on the previous release commit, not a consequence of the 0.1.7 migration, but it blocks
+  the release workflow, whose publish job requires the Node 20 and Node 22 matrix to pass.
+  `tsdown@0.21.0` declares `>=20.19.0` and was verified step by step on Node 20 (`tsc`, `tsdown`,
+  `publint`, `vitest`, SBOM, and license checks all pass). The emitted runtime bundle
+  `lib/client.cjs` is byte-identical to the `0.22.14` build, so shipped behavior is unchanged; only
+  the sourcemap differs, in its `names` table and mapping encoding, with `sourcesContent` identical.
 
 ## 0.1.1-rc.2
 
