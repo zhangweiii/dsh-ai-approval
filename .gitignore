@@ -12,3 +12,8 @@ release-artifacts/
 !.env.example
 .npmrc
 lib/tsconfig.tsbuildinfo
+
+# Local tool caches used by packaging/release verification; never part of the package.
+.ghcache/
+.pnpm-tmp-cache/
+.npmx-cache/
