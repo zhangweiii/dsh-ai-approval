@@ -10,7 +10,11 @@
 
 ## 兼容性
 
-宿主必须提供兼容的 LLM、session、tool、permission preset、system-prompt、timeout 和 user-approval 服务。运维命令还会使用 DSH 可选的 commands 服务；Web 模型选择器会使用 DSH settings 与宿主模型目录 API。缺少这些可选接口时，审批审查仍会工作，但对应的运维 UI 不可用。peer 版本固定在 `package.json` 中，目标运行时为 DSH `0.1.7-alpha.2`，应与宿主保持一致。本包使用独立名称和品牌，不代表任何宿主运行时厂商或模型 provider。
+宿主必须提供兼容的 LLM、session、tool、permission preset、system-prompt、timeout 和 user-approval 服务。运维命令还会使用 DSH 可选的 commands 服务；Web 模型选择器会使用 DSH settings 与宿主模型目录 API。缺少这些可选接口时，审批审查仍会工作，但对应的运维 UI 不可用。peer 版本固定在 `package.json` 中，目标运行时为 DSH `0.2.1-rc.2`（同时适用于 `dsh` CLI 和官方 DeepSeek Harness 桌面版），应与宿主保持一致。本包使用独立名称和品牌，不代表任何宿主运行时厂商或模型 provider。
+
+### DSH 0.2 的插件版本门禁
+
+从 DSH 0.2 起，profile 加载器会在加载插件前，用插件的 `engines.dsh` 范围（没有时改用每个 `@deepseek-ai/dsh-*` peer 范围）检查当前 DSH 版本。不匹配的插件会被跳过，它的 Bundle 行（包括 `ai-approval` preset）也不会生效。本包没有声明 `engines.dsh`，因此由精确的 `0.2.1-rc.2` peer 版本充当门禁：它会在 DSH `0.2.1-rc.2` 上加载，在其他版本上会被跳过，直到安装面向该版本的发布。可以用 `dsh plugin allow-version dsh-ai-approval@<version> --dsh-version <exact> --accept-risk` 授予精确版本豁免，但不建议让审批插件运行在未经测试的宿主上。
 
 ### DSH 0.1.7 的 settings 模型
 
@@ -24,13 +28,25 @@ DSH 0.1.7 用「profile 条目配置表单」取代了 settings _命名空间注
 dsh plugin --profile web add dsh-ai-approval
 ```
 
-重启 `dsh web`，新建或打开 session，然后在权限选择器中选择 **AI Approval**。对应的 session 命令是：
+官方 DeepSeek Harness 桌面版自己管理保留的 `desktop` profile。先打开一次桌面版让它初始化该 profile，完全退出后，再用桌面版附带的 CLI 安装：
+
+```bash
+# macOS；CLI 位于应用包内
+"/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
+  plugin --profile desktop add dsh-ai-approval@next
+```
+
+只有桌面版自带的 CLI 能管理 `desktop` profile。从 npm 单独安装的 `dsh` 会拒绝操作，并报错 `profile "desktop" is managed exclusively by the Electron application`。桌面版与插件的目标 DSH 版本必须一致（见上文的版本门禁），所以请先把桌面版更新到对应版本。预发布版本发布在 npm 的 `next` dist-tag 下，因此命令安装的是 `dsh-ai-approval@next`。
+
+桌面版组合的 Bundle 与 `dsh web` 相同（`dsh-base` 和 `dsh-web-app`），因此权限选择器、**设置 → AI 审批**和下面的运维命令在桌面版中行为一致。`dsh --profile desktop` 不能从 CLI 启动；重新打开桌面版即可加载插件。
+
+重启 `dsh web`（或重新打开桌面版），新建或打开 session，然后在权限选择器中选择 **AI Approval**。对应的 session 命令是：
 
 ```text
 /permission ai-approval
 ```
 
-Bundle 会自动安装插件并加入用于激活插件的 `ai-approval` preset。Reviewer 默认使用 DSH 的 `deepseek-official` / `deepseek-v4-flash` route，并显式设置 `reasoningEffort: off`，避免模型的默认推理过程耗尽短 JSON 审批结果的输出预算；因此需要先配置该 route 及其凭据。Provider 故障或凭据缺失会失败关闭，绝不会转为授权。
+Bundle 会自动安装插件并加入用于激活插件的 `ai-approval` preset。Reviewer 默认使用 DSH 的 `deepseek-official` / `deepseek-flash` route，并显式设置 `reasoningEffort: off`，避免模型的默认推理过程耗尽短 JSON 审批结果的输出预算；因此需要先配置该 route 及其凭据。Provider 故障或凭据缺失会失败关闭，绝不会转为授权。
 
 审批结果继续使用 DSH 自带的 `approval/asked`、`approval/decided` 和工具生命周期显示。每次 AI 审批结束后，还会追加一组经过隐私过滤、明确标记为插件来源的 `command/run` / `command/done` 生命周期，其中包含结果、风险、授权判断、理由、策略限制和审批模型。它是 DSH 持久化且不进入模型上下文的通用会话输出通道，因此 Web 与 TUI 会显示同一份审批结果，刷新或重连后仍然保留。Reviewer 的详细判断仍以进程内 `ai-approval/review-started`、`ai-approval/reviewed` 事件提供给同进程观察者，但这些自定义事件不写入 session 历史：截至 DSH 0.1.7-alpha.2，Harness 只在读取路径识别 `ignorable` envelope 标记，生成的已知事件目录也明确推迟了仓库外插件事件的注册接口。Web Conversation Node 仅保留对修复后旧事件的渲染兼容，不修改 DSH 源码。
 

@@ -10,7 +10,11 @@ The plugin is activated when the current session uses the configured `ai-approva
 
 ## Compatibility
 
-The host must provide compatible LLM, session, tool, permission-preset, system-prompt, timeout, and user-approval services. Operator commands additionally use DSH's optional commands service; the Web model selector uses DSH's settings and host model-catalog APIs. Without those optional surfaces, approval review remains active but the related operator UI is unavailable. The peer versions are pinned in `package.json` and target DSH `0.1.7-alpha.2`; keep them aligned with the host runtime. The package is independently named and branded and is not endorsed by any host-runtime vendor or model provider.
+The host must provide compatible LLM, session, tool, permission-preset, system-prompt, timeout, and user-approval services. Operator commands additionally use DSH's optional commands service; the Web model selector uses DSH's settings and host model-catalog APIs. Without those optional surfaces, approval review remains active but the related operator UI is unavailable. The peer versions are pinned in `package.json` and target DSH `0.2.1-rc.2`, for both the `dsh` CLI and the official DeepSeek Harness desktop app; keep them aligned with the host runtime. The package is independently named and branded and is not endorsed by any host-runtime vendor or model provider.
+
+### DSH 0.2 plugin version gate
+
+Since DSH 0.2, the profile loader checks a plugin's `engines.dsh` range, or else every `@deepseek-ai/dsh-*` peer range, against the running DSH version before loading it. A plugin that does not match is skipped and its Bundle rows (including the `ai-approval` preset) are not applied. This package declares no `engines.dsh`, so its exact `0.2.1-rc.2` peers are the gate: it loads on DSH `0.2.1-rc.2` and is skipped on any other version until a release targeting that version is installed. `dsh plugin allow-version dsh-ai-approval@<version> --dsh-version <exact> --accept-risk` grants an exact-version exemption, but running a reviewer against an untested host is not recommended.
 
 ### DSH 0.1.7 settings model
 
@@ -24,13 +28,25 @@ Install the DSH Bundle into the Web profile:
 dsh plugin --profile web add dsh-ai-approval
 ```
 
-Restart `dsh web`, create or open a session, and select **AI Approval** in the permission selector. The equivalent session command is:
+For the official DeepSeek Harness desktop app, the app owns the reserved `desktop` profile. Open the app once so it initializes that profile, fully quit it, then install with the CLI the app ships:
+
+```bash
+# macOS; the CLI is inside the app bundle
+"/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
+  plugin --profile desktop add dsh-ai-approval@next
+```
+
+Only the app's own CLI may manage the `desktop` profile. A standalone `dsh` installed from npm rejects it with `profile "desktop" is managed exclusively by the Electron application`. The app and the plugin must target the same DSH version (see the version gate above), so update the app first. Prereleases are published under the npm `next` dist-tag, which is why the command installs `dsh-ai-approval@next`.
+
+The desktop app composes the same `dsh-base` and `dsh-web-app` Bundles as `dsh web`, so the permission selector, **Settings → AI approval**, and the operator commands below behave the same there. `dsh --profile desktop` cannot be booted from the CLI; reopen the app to load the plugin.
+
+Restart `dsh web` (or reopen the desktop app), create or open a session, and select **AI Approval** in the permission selector. The equivalent session command is:
 
 ```text
 /permission ai-approval
 ```
 
-The Bundle installs the plugin and adds the activating `ai-approval` preset. It uses DSH's default `deepseek-official` / `deepseek-v4-flash` route with `reasoningEffort: off`, preventing the model's default reasoning from exhausting the short JSON assessment's output budget. That route and its credentials must be configured. A provider outage or missing credentials fail closed and never become approval.
+The Bundle installs the plugin and adds the activating `ai-approval` preset. It uses DSH's default `deepseek-official` / `deepseek-flash` route with `reasoningEffort: off`, preventing the model's default reasoning from exhausting the short JSON assessment's output budget. That route and its credentials must be configured. A provider outage or missing credentials fail closed and never become approval.
 
 Approval outcomes continue to use DSH's built-in `approval/asked`, `approval/decided`, and tool lifecycle. Every completed AI review also appends one privacy-filtered, plugin-authored `command/run` / `command/done` lifecycle containing the outcome, risk, authorization, rationale, policy block, and reviewer route. This is DSH's durable, model-invisible transcript channel, so Web and TUI render the same persisted review result and reconnects retain it. Detailed reviewer facts remain available to same-process observers through `ai-approval/review-started` and `ai-approval/reviewed`, but those custom events are not persisted: as of DSH 0.1.7-alpha.2 the harness honors an `ignorable` envelope marker only on the read path, while the generated known-event catalog explicitly defers a registration surface for out-of-repo plugin events. The Web Conversation Node remains only for rendering repaired legacy events. No DSH source is modified.
 
