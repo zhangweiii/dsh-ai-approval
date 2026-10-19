@@ -31,8 +31,12 @@ dsh plugin --profile web add dsh-ai-approval
 For the official DeepSeek Harness desktop app, the app owns the reserved `desktop` profile. Open the app once so it initializes that profile, fully quit it, then install with the CLI the app ships:
 
 ```bash
-dsh plugin --profile desktop add dsh-ai-approval
+# macOS; the CLI is inside the app bundle
+"/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
+  plugin --profile desktop add dsh-ai-approval@next
 ```
+
+Only the app's own CLI may manage the `desktop` profile. A standalone `dsh` installed from npm rejects it with `profile "desktop" is managed exclusively by the Electron application`. The app and the plugin must target the same DSH version (see the version gate above), so update the app first. Prereleases are published under the npm `next` dist-tag, which is why the command installs `dsh-ai-approval@next`.
 
 The desktop app composes the same `dsh-base` and `dsh-web-app` Bundles as `dsh web`, so the permission selector, **Settings → AI approval**, and the operator commands below behave the same there. `dsh --profile desktop` cannot be booted from the CLI; reopen the app to load the plugin.
 

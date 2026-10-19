@@ -31,8 +31,12 @@ dsh plugin --profile web add dsh-ai-approval
 官方 DeepSeek Harness 桌面版自己管理保留的 `desktop` profile。先打开一次桌面版让它初始化该 profile，完全退出后，再用桌面版附带的 CLI 安装：
 
 ```bash
-dsh plugin --profile desktop add dsh-ai-approval
+# macOS；CLI 位于应用包内
+"/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
+  plugin --profile desktop add dsh-ai-approval@next
 ```
+
+只有桌面版自带的 CLI 能管理 `desktop` profile。从 npm 单独安装的 `dsh` 会拒绝操作，并报错 `profile "desktop" is managed exclusively by the Electron application`。桌面版与插件的目标 DSH 版本必须一致（见上文的版本门禁），所以请先把桌面版更新到对应版本。预发布版本发布在 npm 的 `next` dist-tag 下，因此命令安装的是 `dsh-ai-approval@next`。
 
 桌面版组合的 Bundle 与 `dsh web` 相同（`dsh-base` 和 `dsh-web-app`），因此权限选择器、**设置 → AI 审批**和下面的运维命令在桌面版中行为一致。`dsh --profile desktop` 不能从 CLI 启动；重新打开桌面版即可加载插件。
 
