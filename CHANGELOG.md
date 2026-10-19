@@ -2,6 +2,29 @@
 
 All notable changes are documented here. This project is pre-release; configuration and compatibility details may change between release candidates.
 
+## 0.1.2-rc.2
+
+- Adapted to DSH `0.2.1-rc.2`, the current `next` release of the `dsh` CLI and of the official
+  DeepSeek Harness desktop app (`com.deepseek.dsh`, update feed `0.2.1-rc.2`). Every
+  `@deepseek-ai/dsh-*` peer and dev dependency now pins `0.2.1-rc.2`, `@deepseek-ai/cordis` pins
+  `4.0.5`, and `@deepseek-ai/schemastery` is raised to `3.18.5` so the plugin shares the host's
+  single schemastery copy (two copies made `Config`'s inferred type unnameable and would split the
+  `volatile()` marker the Settings page relies on). The lockfile was regenerated from scratch.
+- The pins are now load-bearing: since DSH 0.2 the profile loader skips any plugin whose
+  `engines.dsh`, or else whose `@deepseek-ai/dsh-*` peers, do not match the running DSH version,
+  together with its Bundle rows. The previous `0.1.7-alpha.2` pins therefore kept the plugin and its
+  `ai-approval` preset from loading at all on DSH 0.2.
+- Changed the Bundle's default reviewer model from `deepseek-v4-flash` to `deepseek-flash`. DSH 0.2's
+  official DeepSeek catalog lists only `deepseek-flash` (DeepSeek-V4.1-Flash) and `deepseek-v4-pro`,
+  and the base Bundle's own default route is now `deepseek-official` / `deepseek-flash`; the old id
+  made every review fail closed as `unavailable`. `reasoningEffort: 'off'` remains supported.
+  Profiles that restate the old model id in their own patch must update it.
+- Documented installing into the desktop app's reserved `desktop` profile and the DSH 0.2 plugin
+  version gate.
+- Verified against the official 0.2.1-rc.2 desktop runtime in an isolated `DSH_HOME`: the plugin
+  passes the version gate, mounts, serves its client bundle, projects its four volatile route fields
+  into Settings with the custom page as the entry's face, and persists route writes.
+
 ## 0.1.2-rc.1
 
 - Restored compatibility with DSH `0.1.7-alpha.2`. The host made several breaking changes that this
