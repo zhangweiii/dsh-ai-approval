@@ -102,7 +102,7 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/cordis": "4.1.0",
     "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-chat": "0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.2",
@@ -136,10 +136,10 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "3.18.5"
+    "@deepseek-ai/schemastery": "3.19.0"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/cordis": "4.1.0",
     "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
     "@deepseek-ai/dsh-api-gateway": "0.2.1-rc.2",
     "@deepseek-ai/dsh-api-remotes": "0.2.1-rc.2",
@@ -165,10 +165,10 @@
     "@types/node": "22.20.0",
     "@types/react": "18.3.28",
     "@vitest/coverage-v8": "4.1.8",
-    "prettier": "3.6.2",
-    "publint": "0.3.14",
+    "prettier": "3.9.10",
+    "publint": "0.3.25",
     "react": "18.3.1",
-    "tsdown": "0.21.0",
+    "tsdown": "0.23.5",
     "typescript": "6.0.3",
     "vitest": "4.1.8"
   }
